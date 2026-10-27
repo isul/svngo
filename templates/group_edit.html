@@ -1,0 +1,49 @@
+{{define "content"}}
+{{$g := .D.Group}}
+<div class="page-head"><h1>{{template "icon-group"}}<a href="/admin/groups">그룹</a> / @{{$g.Name}}</h1></div>
+
+<div class="grid2">
+  <section class="box">
+    <h2>구성원 <span class="count">{{len .D.Members}}</span></h2>
+    <div class="table-wrap"><table class="table">
+      <tbody>{{range .D.Members}}<tr>
+        <td><a href="/admin/users/{{.Username}}">{{.Username}}</a> <span class="muted small">{{.FullName}}</span>{{if not .Enabled}} <span class="badge red">비활성</span>{{end}}</td>
+        <td class="right">
+          <form method="post" action="/admin/groups/{{$g.Name}}/members/{{.Username}}/remove" class="inline">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="btn sm">제외</button>
+          </form>
+        </td>
+      </tr>{{else}}<tr><td class="empty">구성원이 없습니다. (구성원이 없는 그룹의 권한은 적용되지 않습니다)</td></tr>{{end}}</tbody>
+    </table></div>
+    {{if .D.Others}}
+    <form method="post" action="/admin/groups/{{$g.Name}}/members" class="form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>구성원 추가 <span class="muted small">(Ctrl/Shift 로 여러 명 선택)</span>
+        <select name="users" multiple size="6">{{range .D.Others}}<option value="{{.Username}}">{{.Username}}{{with .FullName}} ({{.}}){{end}}</option>{{end}}</select></label>
+      <button class="btn primary">추가</button>
+    </form>
+    {{end}}
+  </section>
+
+  <section class="box">
+    <h2>정보</h2>
+    <form method="post" action="/admin/groups/{{$g.Name}}" class="form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>설명<input name="description" value="{{$g.Description}}" maxlength="200"></label>
+      <button class="btn primary">저장</button>
+    </form>
+  </section>
+</div>
+
+<section class="box">
+  <h2>그룹 권한 규칙</h2>
+  {{template "rule_table" (dict "Rules" .D.Rules "Back" (print "/admin/groups/" $g.Name) "CSRF" .CSRF "ShowRepo" true)}}
+</section>
+
+<section class="box danger-zone">
+  <h2>그룹 삭제</h2>
+  <form method="post" action="/admin/groups/{{$g.Name}}/delete" class="inline" hx-confirm="그룹 '@{{$g.Name}}' 와 그룹 권한 규칙 {{$g.Rules}}개를 삭제할까요?">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn danger">그룹 삭제</button>
+  </form>
+</section>
+{{end}}

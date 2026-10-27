@@ -1,0 +1,118 @@
+{{define "pager"}}{{if gt .Pages 1}}<nav class="pager">
+  {{if .HasPrev}}<a class="btn sm" href="{{.PrevURL}}">« 이전</a>{{end}}
+  <span class="muted">{{.Page}} / {{.Pages}} 페이지 · 총 {{.Total}}건</span>
+  {{if .HasNext}}<a class="btn sm" href="{{.NextURL}}">다음 »</a>{{end}}
+</nav>{{else if .Total}}<p class="muted small">총 {{.Total}}건</p>{{end}}{{end}}
+
+{{define "repo_header"}}
+<div class="repo-head">
+  <h1>{{template "icon-repo"}}<a href="/admin/repos">저장소</a> / <a href="/admin/repos/{{.Repo.Name}}">{{.Repo.Name}}</a>
+    {{if not .Repo.Enabled}}<span class="badge red">비활성</span>{{end}}</h1>
+  {{with .Repo.Description}}<p class="muted">{{.}}</p>{{end}}
+</div>
+<nav class="tabs">
+  <a href="/admin/repos/{{.Repo.Name}}" class="{{if eq .Tab "overview"}}active{{end}}">개요</a>
+  <a href="/admin/repos/{{.Repo.Name}}/files" class="{{if eq .Tab "files"}}active{{end}}">파일</a>
+  <a href="/admin/repos/{{.Repo.Name}}/commits" class="{{if eq .Tab "commits"}}active{{end}}">커밋</a>
+  {{if .S.IsAdmin}}
+  <a href="/admin/repos/{{.Repo.Name}}/perms" class="{{if eq .Tab "perms"}}active{{end}}">권한 <span class="count">{{.Repo.Rules}}</span></a>
+  <a href="/admin/repos/{{.Repo.Name}}/settings" class="{{if eq .Tab "settings"}}active{{end}}">설정</a>
+  {{end}}
+</nav>
+{{end}}
+
+{{define "commit_list"}}
+<div class="table-wrap"><table class="table commits">
+  <thead><tr><th>리비전</th><th>메시지</th><th class="hide-sm">작성자</th><th class="hide-sm">날짜</th><th class="hide-sm num">변경</th></tr></thead>
+  <tbody>
+  {{range .Log}}<tr>
+    <td><a class="rev" href="/admin/repos/{{$.Repo}}/commits/{{.Rev}}">r{{.Rev}}</a></td>
+    <td class="msg-cell">{{if .Hidden}}<span class="muted">(접근할 수 없는 경로가 포함되어 메시지를 숨김)</span>{{else}}{{firstLine .Msg}}{{end}}
+      <div class="show-sm muted small">{{.Author}} · {{dt .Date}}</div></td>
+    <td class="hide-sm">{{.Author}}</td>
+    <td class="hide-sm nowrap">{{dt .Date}}</td>
+    <td class="hide-sm num">{{len .Paths}}</td>
+  </tr>{{else}}<tr><td colspan="5" class="empty">커밋이 없습니다.</td></tr>{{end}}
+  </tbody>
+</table></div>
+{{end}}
+
+{{define "jobs"}}
+<div id="jobs-{{.Repo}}" class="jobs"{{if activeJobs .Jobs}} hx-get="/admin/system/jobs{{if .Repo}}?repo={{.Repo}}{{end}}" hx-trigger="every 3s" hx-swap="outerHTML"{{end}}>
+<div class="table-wrap"><table class="table">
+  <thead><tr><th>#</th><th>작업</th><th>저장소</th><th>상태</th><th>결과</th><th class="hide-sm">시작</th></tr></thead>
+  <tbody>
+  {{range .Jobs}}<tr>
+    <td>{{.ID}}</td><td>{{.KindLabel}}</td><td>{{.Repo}}</td>
+    <td>{{if eq .Status "ok"}}<span class="badge green">완료</span>{{else if eq .Status "failed"}}<span class="badge red">실패</span>{{else if eq .Status "running"}}<span class="badge blue">실행 중</span>{{else}}<span class="badge">대기</span>{{end}}</td>
+    <td class="small break">{{.Message}}</td>
+    <td class="hide-sm nowrap small">{{dt .StartedAt}}</td>
+  </tr>{{else}}<tr><td colspan="6" class="empty">작업 기록이 없습니다.</td></tr>{{end}}
+  </tbody>
+</table></div>
+</div>
+{{end}}
+
+{{define "rule_table"}}
+<div class="table-wrap"><table class="table">
+  <thead><tr>{{if .ShowRepo}}<th>저장소</th>{{end}}<th>경로</th><th>대상</th><th>권한</th><th></th></tr></thead>
+  <tbody>
+  {{range .Rules}}<tr>
+    {{if $.ShowRepo}}<td><a href="/admin/repos/{{.Repo}}/perms">{{.Repo}}</a></td>{{end}}
+    <td><code>{{.Path}}</code></td>
+    <td>{{if eq .SubjectType "user"}}<a href="/admin/users/{{.Subject}}">{{.Subject}}</a>{{else if eq .SubjectType "group"}}<a href="/admin/groups/{{.Subject}}">@{{.Subject}}</a>{{else}}<code>{{.SubjectLabel}}</code>{{end}}</td>
+    <td>
+      <form method="post" action="/admin/rules/{{.ID}}/update" class="inline">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="back" value="{{$.Back}}">
+        <select name="access" class="sm" aria-label="권한">
+          <option value="rw"{{if eq .Access "rw"}} selected{{end}}>읽기/쓰기</option>
+          <option value="r"{{if eq .Access "r"}} selected{{end}}>읽기</option>
+          <option value="none"{{if eq .Access "none"}} selected{{end}}>접근 금지</option>
+        </select>
+        <button class="btn sm">변경</button>
+      </form>
+    </td>
+    <td class="right">
+      <form method="post" action="/admin/rules/{{.ID}}/delete" class="inline" hx-confirm="이 권한 규칙을 삭제할까요?">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="back" value="{{$.Back}}">
+        <button class="btn sm danger">삭제</button>
+      </form>
+    </td>
+  </tr>{{else}}<tr><td colspan="5" class="empty">권한 규칙이 없습니다. 규칙이 없으면 아무도 접근할 수 없습니다.</td></tr>{{end}}
+  </tbody>
+</table></div>
+{{end}}
+
+{{define "access_select"}}
+<select name="access" required>
+  <option value="rw">읽기/쓰기 (rw)</option>
+  <option value="r">읽기 (r)</option>
+  <option value="none">접근 금지</option>
+</select>
+{{end}}
+
+{{define "system_tabs"}}
+<h1>시스템 설정</h1>
+<nav class="tabs">
+  <a href="/admin/system" class="{{if eq .Tab "status"}}active{{end}}">상태 / 설정</a>
+  <a href="/admin/system/backups" class="{{if eq .Tab "backups"}}active{{end}}">백업 / 복원</a>
+  <a href="/admin/system/logs" class="{{if eq .Tab "logs"}}active{{end}}">로그</a>
+</nav>
+{{end}}
+
+{{define "browse_bar"}}
+<div class="browse-bar">
+  <div class="crumbs">
+    <a href="/admin/repos/{{.Repo.Name}}/files{{if .D.Pinned}}?rev={{.D.Rev}}{{end}}"><strong>{{.Repo.Name}}</strong></a>{{range crumbs .D.Path}}<span class="sep">/</span><a href="/admin/repos/{{$.Repo.Name}}/files{{rpath .Path}}{{if $.D.Pinned}}?rev={{$.D.Rev}}{{end}}">{{.Name}}</a>{{end}}
+  </div>
+  <div class="browse-actions">
+    <form method="get" class="inline rev-form">
+      <label class="small">리비전 <input name="rev" type="number" min="0" max="{{.Repo.Youngest}}" value="{{.D.Rev}}" class="w-rev"></label>
+      <button class="btn sm">이동</button>
+      {{if .D.Pinned}}<a class="btn sm" href="/admin/repos/{{.Repo.Name}}/files{{rpath .D.Path}}">HEAD</a>{{end}}
+    </form>
+    <a class="btn sm" href="/admin/repos/{{.Repo.Name}}/commits?path={{.D.Path}}">이력</a>
+  </div>
+</div>
+<div class="copy"><input readonly value="{{.D.SvnURL}}" data-copy aria-label="SVN URL"><button type="button" class="btn sm" data-copy-btn>URL 복사</button></div>
+{{end}}

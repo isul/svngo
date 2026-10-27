@@ -1,0 +1,20 @@
+{{define "content"}}
+{{template "repo_header" .}}
+{{template "browse_bar" .}}
+<div class="file-box">
+  <div class="file-head">
+    {{template "icon-file"}}<strong>{{basename .D.Path}}</strong>
+    <span class="muted small">{{size .D.Size}} · 최종 변경 <a href="/admin/repos/{{.Repo.Name}}/commits/{{.D.Info.Rev}}">r{{.D.Info.Rev}}</a> {{.D.Info.Author}} · {{dt .D.Info.Date}}</span>
+    <span class="spacer"></span>
+    <a class="btn sm" hx-boost="false" href="/admin/repos/{{.Repo.Name}}/raw{{rpath .D.Path}}?rev={{.D.Rev}}" download>다운로드</a>
+  </div>
+  {{if .D.Binary}}
+    <div class="empty">바이너리 파일은 미리보기를 지원하지 않습니다. 다운로드하여 확인하세요.</div>
+  {{else}}
+    {{if .D.Truncated}}<div class="alert warn flat">파일이 커서 앞부분(512KB)만 표시합니다. 전체 내용은 다운로드하세요.</div>{{end}}
+    <div class="code"><table>
+    {{range $i, $l := .D.Lines}}<tr id="L{{add $i 1}}"><td class="ln"><a href="#L{{add $i 1}}">{{add $i 1}}</a></td><td class="lc">{{$l}}</td></tr>{{end}}
+    </table></div>
+  {{end}}
+</div>
+{{end}}

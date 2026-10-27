@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="page-head">
+  <h1>저장소</h1>
+  {{if .S.IsAdmin}}
+  <details class="create"{{if and (not .D.Repos) (not .D.Q)}} open{{end}}>
+    <summary class="btn primary">+ 새 저장소</summary>
+    <form method="post" action="/admin/repos" class="form panel">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>이름 <span class="muted small">(영문, 숫자, . _ -)</span>
+        <input name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" placeholder="project"></label>
+      <label>설명<input name="description" maxlength="200"></label>
+      <label class="check"><input type="checkbox" name="layout" value="1"{{if .D.DefaultLayout}} checked{{end}}> trunk / branches / tags 기본 구조 생성</label>
+      <div class="row">
+        <label>초기 권한 대상
+          <select name="subject"><option value="">(나중에 설정)</option>{{range .D.Subjects}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select></label>
+        <label>권한
+          <select name="access"><option value="rw">읽기/쓰기</option><option value="r">읽기</option></select></label>
+      </div>
+      <button class="btn primary">저장소 생성</button>
+    </form>
+  </details>
+  {{end}}
+</div>
+
+<form class="search" method="get" action="/admin/repos">
+  <input type="search" name="q" value="{{.D.Q}}" placeholder="저장소 이름 또는 설명 검색" aria-label="저장소 검색"
+    hx-get="/admin/repos" hx-trigger="input changed delay:300ms, search" hx-target="#repo-list" hx-select="#repo-list" hx-swap="outerHTML" hx-push-url="true">
+</form>
+
+<div id="repo-list">
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>이름</th><th class="num">리비전</th><th class="hide-sm num">크기</th>{{if .S.IsAdmin}}<th class="hide-sm num">권한 규칙</th>{{end}}<th>상태</th></tr></thead>
+    <tbody>
+    {{range .D.Repos}}<tr>
+      <td><a href="/admin/repos/{{.Name}}"><strong>{{.Name}}</strong></a>{{with .Description}}<div class="muted small">{{.}}</div>{{end}}
+        <div class="muted small mono">{{$.D.SvnBase}}/{{.Name}}</div></td>
+      <td class="num">{{if ge .Youngest 0}}r{{.Youngest}}{{else}}-{{end}}</td>
+      <td class="hide-sm num nowrap">{{size .SizeBytes}}</td>
+      {{if $.S.IsAdmin}}<td class="hide-sm num">{{.Rules}}</td>{{end}}
+      <td>{{if .Enabled}}<span class="badge green">활성</span>{{else}}<span class="badge red">비활성</span>{{end}}</td>
+    </tr>{{else}}<tr><td colspan="5" class="empty">{{if .D.Q}}검색 결과가 없습니다.{{else if .S.IsAdmin}}저장소가 없습니다. 새 저장소를 만들어 보세요.{{else}}접근 가능한 저장소가 없습니다.{{end}}</td></tr>{{end}}
+    </tbody>
+  </table></div>
+  {{template "pager" .D.Pager}}
+</div>
+{{end}}

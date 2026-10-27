@@ -1,0 +1,13 @@
+# E2E override: alternate host ports and a fixed admin password.
+# Some hosts (e.g. certain AppArmor/snap Docker setups) cannot exec any
+# binary with no-new-privileges; drop it only for local testing.
+services:
+  svngo:
+    container_name: svngo-e2e
+    ports: !override
+      - "${SVNGO_HTTP_PUBLISH:-18080}:8080"
+      - "${SVNGO_HTTPS_PUBLISH:-18443}:8443"
+    environment:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: "Adm1n-Test-Pass!"
+    security_opt: !reset []

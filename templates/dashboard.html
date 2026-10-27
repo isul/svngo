@@ -1,0 +1,35 @@
+{{define "content"}}
+<h1>대시보드</h1>
+<div class="cards">
+  <a class="card" href="/admin/repos"><div class="num">{{.D.Counts.repos}}</div><div class="label">저장소</div></a>
+  <a class="card" href="/admin/users"><div class="num">{{.D.Counts.users}}</div><div class="label">사용자{{with .D.Counts.disabledUsers}} · 비활성 {{.}}{{end}}</div></a>
+  <a class="card" href="/admin/groups"><div class="num">{{.D.Counts.groups}}</div><div class="label">그룹</div></a>
+  <a class="card" href="/admin/perms"><div class="num">{{.D.Counts.rules}}</div><div class="label">권한 규칙</div></a>
+</div>
+{{with .D.Counts.legacy}}<div class="alert warn">APR1-MD5 레거시 해시를 사용하는 사용자가 {{.}}명 있습니다. 웹 로그인 시 bcrypt 로 자동 전환되며, 비밀번호 재설정으로도 전환할 수 있습니다. <a href="/admin/users?status=legacy">목록 보기</a></div>{{end}}
+<div class="grid2">
+  <section class="box">
+    <h2>서버 상태</h2>
+    <dl class="kv">
+      <dt>Apache (SVN HTTP)</dt>
+      <dd>{{if .D.Apache.Running}}<span class="badge green">실행 중</span> PID {{.D.Apache.PID}}{{if .D.Apache.TLS}} · HTTPS 사용{{end}}{{else if .D.Apache.Managed}}<span class="badge red">중지됨</span>{{else}}<span class="badge">외부 관리</span>{{end}}</dd>
+      <dt>가동 시간</dt><dd>{{.D.Uptime}}</dd>
+      <dt>저장소 총 크기</dt><dd>{{size .D.TotalSize}}</dd>
+      <dt>디스크 (저장소)</dt>
+      <dd>{{size .D.Disk.Used}} / {{size .D.Disk.Total}} ({{.D.Disk.Pct}}%)<progress max="100" value="{{.D.Disk.Pct}}"></progress></dd>
+      <dt>SVN 접속 URL</dt><dd><code>{{.D.SvnBase}}/&lt;저장소&gt;</code></dd>
+    </dl>
+  </section>
+  <section class="box">
+    <h2>최근 작업</h2>
+    {{template "jobs" (dict "Jobs" .D.Jobs "Repo" "")}}
+  </section>
+</div>
+<section class="box">
+  <div class="box-head"><h2>최근 변경 이력</h2><a href="/admin/system/logs" class="small">전체 보기</a></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>시각</th><th>사용자</th><th>작업</th><th>내용</th></tr></thead>
+    <tbody>{{range .D.Audits}}<tr><td class="nowrap small">{{dt .At}}</td><td>{{.Actor}}</td><td class="nowrap" title="{{.Action}}">{{auditLabel .Action}}</td><td class="small break">{{.Detail}}</td></tr>{{else}}<tr><td colspan="4" class="empty">기록이 없습니다.</td></tr>{{end}}</tbody>
+  </table></div>
+</section>
+{{end}}

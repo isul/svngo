@@ -1,0 +1,47 @@
+services:
+  svngo:
+    build:
+      context: .
+    image: svngo:latest
+    container_name: svngo
+    restart: unless-stopped
+    ports:
+      # http://<host>/svn/<repo>  and  http://<host>/admin
+      - "${SVNGO_HTTP_PUBLISH:-80}:8080"
+      # HTTPS: put server.crt / server.key in the config volume under tls/
+      - "${SVNGO_HTTPS_PUBLISH:-443}:8443"
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SVNGO_SERVER_NAME: ${SVNGO_SERVER_NAME:-localhost}
+      SVNGO_COOKIE_SECURE: ${SVNGO_COOKIE_SECURE:-auto}
+      SVNGO_BCRYPT_COST: ${SVNGO_BCRYPT_COST:-8}
+      SVNGO_SVN_MAX_BODY_MB: ${SVNGO_SVN_MAX_BODY_MB:-1024}
+      SVNGO_SVN_MAX_XML_MB: ${SVNGO_SVN_MAX_XML_MB:-64}
+      TZ: ${TZ:-Asia/Seoul}
+    volumes:
+      - svn-repos:/data/repos
+      - svn-config:/data/config
+      - svn-db:/data/db
+      - svn-backups:/data/backups
+    # hardening: read-only root fs, no capabilities, no privilege escalation
+    read_only: true
+    tmpfs:
+      - /run/svngo:size=16m,mode=0750,uid=1000,gid=1000
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  svn-repos:
+  svn-config:
+  svn-db:
+  svn-backups:

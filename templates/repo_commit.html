@@ -1,0 +1,47 @@
+{{define "content"}}
+{{template "repo_header" .}}
+<section class="box">
+  <div class="box-head">
+    <h2>리비전 r{{.D.Info.Rev}}</h2>
+    <div class="btn-group">
+      {{if gt .D.Info.Rev 1}}<a class="btn sm" href="/admin/repos/{{.Repo.Name}}/commits/{{sub64 .D.Info.Rev 1}}">← r{{sub64 .D.Info.Rev 1}}</a>{{end}}
+      {{if lt .D.Info.Rev .Repo.Youngest}}<a class="btn sm" href="/admin/repos/{{.Repo.Name}}/commits/{{add64 .D.Info.Rev 1}}">r{{add64 .D.Info.Rev 1}} →</a>{{end}}
+      <a class="btn sm" href="/admin/repos/{{.Repo.Name}}/files?rev={{.D.Info.Rev}}">이 리비전의 파일</a>
+    </div>
+  </div>
+  <dl class="kv">
+    <dt>작성자</dt><dd>{{or .D.Info.Author "(없음)"}}</dd>
+    <dt>날짜</dt><dd>{{dt .D.Info.Date}}</dd>
+  </dl>
+  {{if .D.HiddenPaths}}<p class="muted">접근할 수 없는 경로가 포함되어 있어 커밋 메시지와 일부 변경 내역을 숨겼습니다.</p>
+  {{else}}<pre class="msg">{{or .D.Info.Msg "(메시지 없음)"}}</pre>{{end}}
+</section>
+
+<section class="box">
+  <h2>변경 파일 <span class="count">{{len .D.Changes}}</span></h2>
+  <div class="table-wrap"><table class="table">
+    <tbody>
+    {{range .D.Changes}}<tr>
+      <td class="shrink"><span class="act act-{{slice .Action 0 1}}">{{actionLabel (slice .Action 0 1)}}</span></td>
+      <td class="break">{{if or .IsDir (eq .Action "D")}}{{.Path}}{{if .IsDir}}/{{end}}{{else}}<a href="/admin/repos/{{$.Repo.Name}}/files{{rpath .Path}}?rev={{$.D.Info.Rev}}">{{.Path}}</a>{{end}}</td>
+    </tr>{{else}}<tr><td class="empty">변경된 경로가 없습니다.</td></tr>{{end}}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="box">
+  <div class="box-head">
+    <h2>Diff</h2>
+    {{if gt .D.Info.Rev 0}}<a class="btn sm" hx-boost="false" href="/admin/repos/{{.Repo.Name}}/diff/{{.D.Info.Rev}}" download>원본 diff 다운로드</a>{{end}}
+  </div>
+  {{with .D.DiffErr}}<div class="alert err">{{.}}</div>{{end}}
+  {{if .D.Truncated}}<div class="alert warn">diff 가 커서 일부만 표시합니다. 전체 내용은 원본 diff 를 다운로드하세요.</div>{{end}}
+  {{range .D.Files}}
+  <div class="diff-file">
+    <div class="diff-head">{{.Header}}</div>
+    <div class="code"><table>{{range .Lines}}<tr class="{{.Class}}"><td class="lc">{{.Text}}</td></tr>{{end}}</table></div>
+    {{if .Truncated}}<div class="muted small pad">… 이 파일의 나머지 diff 는 생략되었습니다.</div>{{end}}
+  </div>
+  {{else}}<p class="muted">표시할 텍스트 diff 가 없습니다.</p>{{end}}
+</section>
+{{end}}

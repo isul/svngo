@@ -1,0 +1,18 @@
+{{define "content"}}
+<h1>내 계정</h1>
+<section class="box narrow">
+  <dl class="kv">
+    <dt>아이디</dt><dd>{{.S.Username}}</dd>
+    <dt>계정 종류</dt><dd>{{if .S.IsAdmin}}웹 관리자{{else}}SVN 사용자{{end}}</dd>
+  </dl>
+  <h2>비밀번호 변경</h2>
+  <form method="post" action="/admin/account/password" class="form">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <label>현재 비밀번호<input name="current" type="password" required maxlength="72" autocomplete="current-password"></label>
+    <label>새 비밀번호 <span class="muted small">(8자 이상)</span><input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+    <label>새 비밀번호 확인<input name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+    <button class="btn primary">변경</button>
+  </form>
+  {{if not .S.IsAdmin}}<p class="muted small">SVN 사용자 비밀번호를 변경하면 SVN 클라이언트(TortoiseSVN 등)에도 즉시 적용됩니다. 클라이언트에 저장된 인증 정보를 지우고 새 비밀번호로 다시 로그인하세요.</p>{{end}}
+</section>
+{{end}}

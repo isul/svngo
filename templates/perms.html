@@ -1,0 +1,26 @@
+{{define "content"}}
+<h1>권한</h1>
+<section class="box">
+  <h2>권한 추가 / 변경</h2>
+  <form method="post" action="/admin/perms" class="form row-form">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.D.Back}}">
+    <label>저장소<select name="repo" required><option value="">선택…</option>{{range .D.Repos}}<option value="{{.}}"{{if eq . $.D.Repo}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <label>경로<input name="path" value="/" required maxlength="1024"></label>
+    <label>대상<select name="subject" required><option value="">선택…</option>{{range .D.Subjects}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select></label>
+    <label>권한{{template "access_select"}}</label>
+    <button class="btn primary">저장</button>
+  </form>
+  <p class="muted small">권한: 읽기(r), 읽기/쓰기(rw), 접근 금지. 하위 경로 규칙이 상위 경로 규칙보다 우선합니다. 변경 즉시 Apache 재시작 없이 SVN 에 적용되며 libsvn 으로 검증됩니다.</p>
+</section>
+
+<form class="search row" method="get" action="/admin/perms">
+  <select name="repo" aria-label="저장소 필터"><option value="">모든 저장소</option>{{range .D.Repos}}<option value="{{.}}"{{if eq . $.D.Repo}} selected{{end}}>{{.}}</option>{{end}}</select>
+  <input name="subject" value="{{.D.Subject}}" placeholder="대상 (예: alice, @dev, *)" aria-label="대상 필터">
+  <button class="btn">필터</button>
+</form>
+
+<section class="box">
+  {{template "rule_table" (dict "Rules" .D.Rules "Back" .D.Back "CSRF" .CSRF "ShowRepo" true)}}
+  {{template "pager" .D.Pager}}
+</section>
+{{end}}

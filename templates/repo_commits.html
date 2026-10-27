@@ -1,0 +1,16 @@
+{{define "content"}}
+{{template "repo_header" .}}
+<div class="page-head">
+  <h2>커밋 이력{{if ne .D.Path "/"}} <code>{{.D.Path}}</code>{{end}}</h2>
+  <form method="get" action="/admin/repos/{{.Repo.Name}}/commits" class="inline">
+    <input name="path" value="{{.D.Path}}" placeholder="/trunk" aria-label="경로 필터">
+    <button class="btn sm">경로 필터</button>
+  </form>
+</div>
+{{template "commit_list" (dict "Log" .D.Log "Repo" .Repo.Name)}}
+<nav class="pager">
+  {{if ne .D.Start .Repo.Youngest}}<a class="btn sm" href="/admin/repos/{{.Repo.Name}}/commits?path={{.D.Path}}">« 최신</a>{{end}}
+  <span class="muted small">r{{.D.Start}} 부터</span>
+  {{if ge .D.Next 0}}<a class="btn sm" href="/admin/repos/{{.Repo.Name}}/commits?path={{.D.Path}}&amp;before={{.D.Next}}">이전 커밋 »</a>{{end}}
+</nav>
+{{end}}

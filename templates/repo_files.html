@@ -1,0 +1,17 @@
+{{define "content"}}
+{{template "repo_header" .}}
+{{template "browse_bar" .}}
+<div class="table-wrap"><table class="table files">
+  <thead><tr><th>이름</th><th class="hide-sm num">크기</th><th>최종 커밋</th><th class="hide-sm">작성자</th><th class="hide-sm">날짜</th></tr></thead>
+  <tbody>
+  {{if ne .D.Path "/"}}<tr><td colspan="5"><a href="/admin/repos/{{.Repo.Name}}/files{{rpath (parent .D.Path)}}{{if .D.Pinned}}?rev={{.D.Rev}}{{end}}">{{template "icon-dir"}}..</a></td></tr>{{end}}
+  {{range .D.Entries}}<tr>
+    <td class="name"><a href="/admin/repos/{{$.Repo.Name}}/files{{rpath .Path}}{{if $.D.Pinned}}?rev={{$.D.Rev}}{{end}}">{{if eq .Kind "dir"}}{{template "icon-dir"}}{{else}}{{template "icon-file"}}{{end}}{{.Name}}</a></td>
+    <td class="hide-sm num nowrap">{{if eq .Kind "file"}}{{size .Size}}{{end}}</td>
+    <td><a class="rev" href="/admin/repos/{{$.Repo.Name}}/commits/{{.Rev}}">r{{.Rev}}</a></td>
+    <td class="hide-sm">{{.Author}}</td>
+    <td class="hide-sm nowrap small">{{dt .Date}}</td>
+  </tr>{{else}}<tr><td colspan="5" class="empty">빈 디렉터리입니다.</td></tr>{{end}}
+  </tbody>
+</table></div>
+{{end}}

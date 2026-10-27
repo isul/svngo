@@ -1,0 +1,62 @@
+{{define "content"}}
+<div class="page-head">
+  <h1>사용자</h1>
+  <div class="btn-group">
+    <details class="create"{{if and (not .D.Users) (not .D.Q) (not .D.Status)}} open{{end}}>
+      <summary class="btn primary">+ 새 사용자</summary>
+      <form method="post" action="/admin/users" class="form panel">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <label>아이디 <span class="muted small">(영문, 숫자, . _ - @)</span>
+          <input name="username" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._@\-]{0,63}" autocomplete="off"></label>
+        <div class="row">
+          <label>이름<input name="full_name" maxlength="100"></label>
+          <label>이메일<input name="email" type="email" maxlength="254"></label>
+        </div>
+        <div class="row">
+          <label>비밀번호 <span class="muted small">(8자 이상)</span><input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+          <label>비밀번호 확인<input name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+        </div>
+        {{if .D.Groups}}<fieldset><legend>그룹</legend><div class="checks">{{range .D.Groups}}<label class="check"><input type="checkbox" name="groups" value="{{.}}"> @{{.}}</label>{{end}}</div></fieldset>{{end}}
+        <button class="btn primary">사용자 생성</button>
+      </form>
+    </details>
+    <details class="create">
+      <summary class="btn">htpasswd 가져오기</summary>
+      <form method="post" action="/admin/users/import" class="form panel" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <p class="muted small">기존 Apache htpasswd 파일(APR1-MD5 또는 bcrypt)을 가져옵니다. 비밀번호는 해시 그대로 이전되어 기존 비밀번호로 계속 사용할 수 있습니다.</p>
+        <label>파일<input type="file" name="file" accept=".htpasswd,.txt,text/plain"></label>
+        <label>또는 내용 붙여넣기<textarea name="data" rows="5" placeholder="user1:$apr1$...&#10;user2:$2y$..."></textarea></label>
+        <label class="check"><input type="checkbox" name="overwrite" value="1"> 이미 있는 사용자의 비밀번호도 덮어쓰기</label>
+        <button class="btn primary">가져오기</button>
+      </form>
+    </details>
+  </div>
+</div>
+
+<form class="search row" method="get" action="/admin/users" hx-get="/admin/users" hx-trigger="input changed delay:300ms from:input[name=q], change from:select, submit" hx-target="#user-list" hx-select="#user-list" hx-swap="outerHTML" hx-push-url="true">
+  <input type="search" name="q" value="{{.D.Q}}" placeholder="아이디, 이름, 이메일 검색" aria-label="사용자 검색">
+  <select name="status" aria-label="상태 필터">
+    <option value="">전체</option>
+    <option value="enabled"{{if eq .D.Status "enabled"}} selected{{end}}>활성</option>
+    <option value="disabled"{{if eq .D.Status "disabled"}} selected{{end}}>비활성</option>
+    <option value="legacy"{{if eq .D.Status "legacy"}} selected{{end}}>레거시 해시</option>
+  </select>
+</form>
+
+<div id="user-list">
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>아이디</th><th class="hide-sm">이름 / 이메일</th><th class="hide-sm">그룹</th><th class="hide-sm">해시</th><th>상태</th></tr></thead>
+    <tbody>
+    {{range .D.Users}}<tr>
+      <td><a href="/admin/users/{{.Username}}"><strong>{{.Username}}</strong></a><div class="show-sm muted small">{{.FullName}}</div></td>
+      <td class="hide-sm">{{.FullName}}{{with .Email}}<div class="muted small">{{.}}</div>{{end}}</td>
+      <td class="hide-sm small">{{.Groups}}</td>
+      <td class="hide-sm small">{{hashLabel .Hash}}</td>
+      <td>{{if .Enabled}}<span class="badge green">활성</span>{{else}}<span class="badge red">비활성</span>{{end}}</td>
+    </tr>{{else}}<tr><td colspan="5" class="empty">사용자가 없습니다.</td></tr>{{end}}
+    </tbody>
+  </table></div>
+  {{template "pager" .D.Pager}}
+</div>
+{{end}}

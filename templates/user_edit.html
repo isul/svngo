@@ -1,0 +1,85 @@
+{{define "content"}}
+{{$u := .D.User}}
+<div class="page-head">
+  <h1>{{template "icon-user"}}<a href="/admin/users">사용자</a> / {{$u.Username}}
+    {{if $u.Enabled}}<span class="badge green">활성</span>{{else}}<span class="badge red">비활성</span>{{end}}</h1>
+</div>
+
+{{with .D.TempPassword}}
+<div class="alert warn">
+  <strong>임시 비밀번호가 발급되었습니다.</strong> 이 화면을 벗어나면 다시 볼 수 없습니다. 사용자에게 안전하게 전달하고 변경하도록 안내하세요.
+  <div class="copy"><input readonly value="{{.}}" data-copy aria-label="임시 비밀번호" class="mono"><button type="button" class="btn sm" data-copy-btn>복사</button></div>
+</div>
+{{end}}
+
+<div class="grid2">
+  <section class="box">
+    <h2>기본 정보</h2>
+    <form method="post" action="/admin/users/{{$u.Username}}" class="form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>이름<input name="full_name" value="{{$u.FullName}}" maxlength="100"></label>
+      <label>이메일<input name="email" type="email" value="{{$u.Email}}" maxlength="254"></label>
+      <button class="btn primary">저장</button>
+    </form>
+    <dl class="kv small">
+      <dt>비밀번호 해시</dt><dd>{{hashLabel $u.Hash}}</dd>
+      <dt>생성</dt><dd>{{dt $u.CreatedAt}}</dd>
+      <dt>수정</dt><dd>{{dt $u.UpdatedAt}}</dd>
+    </dl>
+  </section>
+
+  <section class="box">
+    <h2>비밀번호</h2>
+    <form method="post" action="/admin/users/{{$u.Username}}/password" class="form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>새 비밀번호<input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+      <label>새 비밀번호 확인<input name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+      <button class="btn primary">비밀번호 변경</button>
+    </form>
+    <form method="post" action="/admin/users/{{$u.Username}}/reset" class="inline" hx-confirm="임의의 임시 비밀번호로 초기화할까요? 기존 비밀번호는 즉시 사용할 수 없게 됩니다.">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button class="btn">임시 비밀번호로 초기화</button>
+    </form>
+  </section>
+</div>
+
+<div class="grid2">
+  <section class="box">
+    <h2>그룹</h2>
+    {{if .D.Groups}}
+    <form method="post" action="/admin/users/{{$u.Username}}/groups" class="form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <div class="checks">{{range .D.Groups}}<label class="check"><input type="checkbox" name="groups" value="{{.}}"{{if index $.D.Member .}} checked{{end}}> @{{.}}</label>{{end}}</div>
+      <button class="btn primary">그룹 저장</button>
+    </form>
+    {{else}}<p class="muted">그룹이 없습니다. <a href="/admin/groups">그룹 만들기</a></p>{{end}}
+  </section>
+
+  <section class="box">
+    <h2>저장소 접근 (루트 기준 실효 권한)</h2>
+    <div class="table-wrap"><table class="table">
+      <tbody>{{range .D.Effective}}<tr><td><a href="/admin/repos/{{.Repo}}">{{.Repo}}</a><div class="muted small mono">{{$.D.SvnBase}}/{{.Repo}}</div></td><td>{{accessLabel .Access}}</td></tr>{{else}}<tr><td class="empty">접근 가능한 저장소 루트가 없습니다{{if not $u.Enabled}} (비활성 사용자){{end}}.</td></tr>{{end}}</tbody>
+    </table></div>
+  </section>
+</div>
+
+<section class="box">
+  <h2>직접 지정된 권한 규칙</h2>
+  {{template "rule_table" (dict "Rules" .D.Rules "Back" (print "/admin/users/" $u.Username) "CSRF" .CSRF "ShowRepo" true)}}
+  <p class="muted small">그룹을 통한 권한은 그룹 화면에서 확인할 수 있습니다. 권한 추가는 <a href="/admin/perms">권한</a> 또는 저장소의 권한 탭에서 합니다.</p>
+</section>
+
+<section class="box danger-zone">
+  <h2>계정 상태 / 삭제</h2>
+  <div class="btn-row">
+    <form method="post" action="/admin/users/{{$u.Username}}/toggle" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      {{if $u.Enabled}}<button class="btn">비활성화 (SVN 인증 차단)</button>{{else}}<button class="btn primary">활성화</button>{{end}}
+    </form>
+    <form method="post" action="/admin/users/{{$u.Username}}/delete" class="inline" hx-confirm="사용자 '{{$u.Username}}' 와 직접 지정된 권한을 삭제할까요?">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button class="btn danger">사용자 삭제</button>
+    </form>
+  </div>
+</section>
+{{end}}

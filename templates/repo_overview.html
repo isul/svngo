@@ -1,0 +1,33 @@
+{{define "content"}}
+{{template "repo_header" .}}
+<div class="grid2">
+  <section class="box">
+    <h2>체크아웃</h2>
+    <div class="copy"><input readonly value="{{.D.SvnURL}}" data-copy aria-label="SVN URL"><button type="button" class="btn sm" data-copy-btn>복사</button></div>
+    <pre class="cmd">svn checkout {{.D.SvnURL}}/trunk {{.Repo.Name}}</pre>
+    <p class="muted small">TortoiseSVN: 탐색기에서 마우스 오른쪽 클릭 → SVN Checkout → 위 URL 입력. 인증은 SVN 사용자 계정으로 합니다.</p>
+    {{if not .S.IsAdmin}}<p>내 권한 (저장소 루트): <strong>{{accessLabel .D.Access}}</strong></p>{{end}}
+  </section>
+  <section class="box">
+    <h2>정보</h2>
+    <dl class="kv">
+      <dt>UUID</dt><dd><code class="break">{{.D.UUID}}</code></dd>
+      <dt>최신 리비전</dt><dd>r{{.Repo.Youngest}}</dd>
+      <dt>크기</dt><dd>{{size .Repo.SizeBytes}}{{if .Repo.SizeAt}} <span class="muted small">({{dt .Repo.SizeAt}} 기준)</span>{{end}}</dd>
+      <dt>상태</dt><dd>{{if .Repo.Enabled}}<span class="badge green">활성</span>{{else}}<span class="badge red">비활성 (SVN 접근 차단)</span>{{end}}</dd>
+      <dt>등록일</dt><dd>{{dt .Repo.CreatedAt}}</dd>
+      {{if .S.IsAdmin}}<dt>권한 규칙</dt><dd><a href="/admin/repos/{{.Repo.Name}}/perms">{{.Repo.Rules}}개</a></dd>{{end}}
+    </dl>
+  </section>
+</div>
+<section class="box">
+  <div class="box-head"><h2>최근 커밋</h2><a class="small" href="/admin/repos/{{.Repo.Name}}/commits">전체 커밋 보기</a></div>
+  {{template "commit_list" (dict "Log" .D.Log "Repo" .Repo.Name)}}
+</section>
+{{if .S.IsAdmin}}
+<section class="box">
+  <h2>최근 작업</h2>
+  {{template "jobs" (dict "Jobs" .D.Jobs "Repo" .Repo.Name)}}
+</section>
+{{end}}
+{{end}}
