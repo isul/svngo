@@ -240,9 +240,21 @@ E2E는 다음 항목을 실제 `svn` 명령으로 검증합니다.
 ## 디렉터리 구조
 
 ```
-*.go               Go 관리 서버 (package main)
-templates/         html/template 화면 (한국어)
-static/            CSS, htmx(로컬 번들), 소형 JS
+cmd/svngo/            진입점 (serve, healthcheck, admin-passwd, version 명령)
+internal/
+  server/             관리 웹 앱: 핸들러, 세션·CSRF, 작업(백업·복원), DB→인증 파일 동기화
+    templates/        html/template 화면 (한국어, 바이너리에 내장)
+    static/           CSS, htmx(로컬 번들), 소형 JS (바이너리에 내장)
+  apache/             httpd 프로세스 관리, 로그 수집, SVN 무차별 대입 차단
+  svn/                svnadmin·svnlook·svn·authz 검증 도구 실행
+  authz/              권한 정책 평가, htpasswd·authz 파일 생성
+  store/              SQLite 스키마, 감사 로그, 설정값
+  passwd/             bcrypt·APR1 해시, htpasswd 파싱
+  config/             환경 변수 설정
+  validate/           이름·비밀번호·권한 경로 검증
+  repopath/           저장소 내부 경로 처리
+  fsutil/             원자적 파일 쓰기
+  logring/            최근 로그 보관(메모리)
 docker/httpd.conf  Apache 설정 (mod_dav_svn, authz_svn, proxy)
 docker/svngo-authz.c  libsvn 기반 authz 검증 도구 (svnauthz 호환)
 Dockerfile         멀티 스테이지 빌드 (Go → C 헬퍼 → alpine 런타임)

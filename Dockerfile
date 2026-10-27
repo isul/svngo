@@ -9,13 +9,12 @@ FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS gobuild
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY *.go ./
-COPY templates ./templates
-COPY static ./static
+COPY cmd ./cmd
+COPY internal ./internal
 ARG TARGETOS TARGETARCH
 ARG VERSION=1.0.0
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/svngo .
+    go build -trimpath -ldflags="-s -w -X svngo/internal/server.Version=${VERSION}" -o /out/svngo ./cmd/svngo
 
 # ---- svngo-authz: authz validator linked against libsvn_repos ----
 FROM alpine:${ALPINE_VERSION} AS cbuild
