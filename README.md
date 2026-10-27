@@ -6,6 +6,7 @@ Go로 작성한 경량 Subversion(SVN) 서버 및 웹 관리 시스템입니다.
 - PHP / Node / Java / Redis / ORM / 프론트엔드 프레임워크를 사용하지 않습니다.
 - 이미지 약 36MB, 유휴 메모리는 컨테이너 전체 약 12MB 수준입니다(Apache 포함).
 - amd64 / arm64 멀티 아키텍처 빌드를 지원합니다.
+- 빌드된 이미지는 Docker Hub [isul/svngo](https://hub.docker.com/r/isul/svngo)에서 받을 수 있습니다.
 
 ## 구조
 
@@ -41,7 +42,158 @@ Go로 작성한 경량 Subversion(SVN) 서버 및 웹 관리 시스템입니다.
 | 백업 | 백업 목록·다운로드·삭제·업로드, 새 저장소로 복원 또는 덮어쓰기 복원 |
 | 로그 | 감사 로그(누가 무엇을 바꿨는지), 애플리케이션 로그, Apache 로그 |
 
+## 화면 미리보기
+
+샘플 데이터(저장소 5개, 사용자 7명, 그룹 4개)로 촬영한 웹 관리 화면입니다.
+
+**대시보드**: 저장소·사용자·그룹·권한 수, Apache 상태, 디스크 사용량, 최근 작업과 변경 이력
+
+![대시보드](docs/images/02-dashboard.png)
+
+**저장소 개요**: 체크아웃 URL, UUID·리비전·크기, 최근 커밋
+
+![저장소 개요](docs/images/04-repo-overview.png)
+
+**커밋 상세와 diff**: 작성자·메시지, 변경 파일, 파일별 diff
+
+![커밋 상세와 diff](docs/images/08-repo-commit-diff.png)
+
+**저장소 권한**: 경로별 권한 규칙과 권한 확인 도구(SvnGo 평가와 libsvn 실제 결과를 함께 표시)
+
+![저장소 권한](docs/images/09-repo-perms.png)
+
+<details>
+<summary>화면 더 보기 (로그인, 저장소 목록, 파일 브라우저, 사용자·그룹, 시스템 설정, 백업, 로그, 다크 모드)</summary>
+
+**로그인**
+
+![로그인](docs/images/01-login.png)
+
+**저장소 목록**
+
+![저장소 목록](docs/images/03-repos.png)
+
+**파일 브라우저**
+
+![파일 브라우저](docs/images/05-repo-files.png)
+
+**파일 보기**
+
+![파일 보기](docs/images/06-repo-file.png)
+
+**커밋 로그**
+
+![커밋 로그](docs/images/07-repo-commits.png)
+
+**전체 권한 규칙**
+
+![전체 권한 규칙](docs/images/10-perms.png)
+
+**사용자 목록**
+
+![사용자 목록](docs/images/11-users.png)
+
+**사용자 수정**: 정보 수정, 비밀번호 변경·임시 비밀번호 발급, 그룹, 유효 권한
+
+![사용자 수정](docs/images/12-user-edit.png)
+
+**그룹 목록**
+
+![그룹 목록](docs/images/13-groups.png)
+
+**그룹 수정**: 멤버 추가·제외, 그룹 권한
+
+![그룹 수정](docs/images/14-group-edit.png)
+
+**시스템 설정**: 서버 상태, 인증 파일 동기화 검증, SVN 접속 차단 목록, 서버 설정, 웹 관리자 계정
+
+![시스템 설정](docs/images/15-system.png)
+
+**백업 / 복원**
+
+![백업 / 복원](docs/images/16-backups.png)
+
+**감사 로그**
+
+![감사 로그](docs/images/17-logs.png)
+
+**다크 모드**: 운영체제 설정(`prefers-color-scheme`)을 따릅니다.
+
+![다크 모드 대시보드](docs/images/18-dashboard-dark.png)
+
+**SVN 사용자로 로그인한 화면**: 권한이 있는 저장소만 보이고 관리 메뉴는 표시되지 않습니다(QA 그룹 사용자 `jung.hoon`).
+
+![SVN 사용자 화면](docs/images/19-svn-user-repos.png)
+
+</details>
+
+## Docker Hub 이미지
+
+소스를 빌드하지 않고 Docker Hub에 올라간 이미지를 바로 쓸 수 있습니다.
+
+- 저장소: [hub.docker.com/r/isul/svngo](https://hub.docker.com/r/isul/svngo)
+- 이미지 이름: `isul/svngo`
+
+| 태그 | 플랫폼 | 설명 |
+|---|---|---|
+| `1.0.0` | linux/amd64 | 버전 고정. 운영 환경에 권장 |
+| `latest` | linux/amd64 | 가장 최근 릴리스 |
+
+- 구성: Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26
+- ARM CPU 호스트(일부 시놀로지 모델, Raspberry Pi 등)에서는 [멀티 아키텍처 빌드](#멀티-아키텍처-빌드)로 arm64 이미지를 직접 만들어야 합니다.
+
+### docker run으로 실행 (Windows 11 PowerShell)
+
+```powershell
+docker run -d --name svngo --restart unless-stopped `
+  -p 80:8080 -p 443:8443 `
+  -e ADMIN_PASSWORD="Change-Me-123" `
+  -v svn-repos:/data/repos -v svn-config:/data/config `
+  -v svn-db:/data/db -v svn-backups:/data/backups `
+  --read-only `
+  --tmpfs "/run/svngo:size=16m,mode=0750,uid=1000,gid=1000" `
+  --tmpfs "/tmp:size=64m,mode=1777" `
+  --cap-drop ALL `
+  --security-opt "no-new-privileges:true" `
+  isul/svngo:1.0.0
+```
+
+PowerShell은 따옴표 없는 쉼표를 배열 구분자로 해석하므로 `--tmpfs` 값은 따옴표로 감쌉니다. 각 옵션의 의미는 [컨테이너 보안 옵션](#컨테이너-보안-옵션)을 참고하세요.
+
+### docker compose로 실행
+
+이 저장소의 `docker-compose.yml`에서 `build:` 블록과 `image:` 줄을 다음처럼 바꾸면, 빌드하지 않고 Docker Hub 이미지를 사용합니다. 나머지 설정과 `.env`는 그대로 씁니다.
+
+```yaml
+services:
+  svngo:
+    image: isul/svngo:1.0.0
+```
+
+```powershell
+docker compose pull
+docker compose up -d
+docker compose ps        # STATUS 가 healthy 이면 준비 완료
+```
+
+### 이미지 업데이트
+
+데이터는 네 볼륨에 있으므로 컨테이너를 새 이미지로 다시 만들어도 유지됩니다. 업데이트 전에 볼륨을 백업해 두는 것을 권장합니다.
+
+```powershell
+# compose: 태그를 새 버전으로 바꾼 뒤
+docker compose pull
+docker compose up -d
+
+# docker run: 새 이미지를 받고 기존 컨테이너를 지운 뒤
+docker pull isul/svngo:<새버전>
+docker stop svngo; docker rm svngo
+# 위 docker run 명령을 새 태그로 다시 실행합니다(볼륨 이름은 그대로)
+```
+
 ## 빠른 시작 (Windows 11 PowerShell)
+
+소스에서 이미지를 직접 빌드해 실행하는 방법입니다. 빌드 없이 쓰려면 [Docker Hub 이미지](#docker-hub-이미지)를 참고하세요.
 
 사전 준비: [Docker Desktop](https://www.docker.com/products/docker-desktop/)을 설치하고 실행합니다.
 
@@ -73,7 +225,7 @@ docker compose logs -f svngo
 
 ### 초기 관리자 계정
 
-- 컨테이너를 처음 시작할 때 관리자 계정이 없으면 `ADMIN_USERNAME` / `ADMIN_PASSWORD`로 생성합니다(기본 ID `admin`).
+- 컨테이너를 처음 시작할 때 관리자 계정이 없으면 `ADMIN_USERNAME` / `ADMIN_PASSWORD`로 생성합니다(기본 ID `admin`). 비밀번호는 8자 이상이어야 합니다.
 - `ADMIN_PASSWORD`를 비워 두면 임의 비밀번호를 생성해 config 볼륨의 `initial-admin-password` 파일(권한 0600)에 저장합니다. 비밀번호는 로그에 출력하지 않습니다.
 
   ```powershell
@@ -108,7 +260,7 @@ TortoiseSVN에서는 저장소 URL에 `http://localhost/svn/myrepo`를 입력합
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `ADMIN_USERNAME` | `admin` | 초기 관리자 ID |
-| `ADMIN_PASSWORD` / `ADMIN_PASSWORD_FILE` | (없음) | 초기 관리자 비밀번호(파일 지정 가능, Docker secret 용) |
+| `ADMIN_PASSWORD` / `ADMIN_PASSWORD_FILE` | (없음) | 초기 관리자 비밀번호(8자 이상, 파일 지정 가능, Docker secret 용) |
 | `SVNGO_HTTP_PUBLISH` / `SVNGO_HTTPS_PUBLISH` | `80` / `443` | 호스트에 공개할 포트(compose) |
 | `SVNGO_SERVER_NAME` | `localhost` | Apache ServerName |
 | `SVNGO_COOKIE_SECURE` | `auto` | 세션 쿠키 Secure 속성: `auto`(HTTPS 또는 `X-Forwarded-Proto: https`), `always`, `never` |
@@ -119,6 +271,49 @@ TortoiseSVN에서는 저장소 URL에 `http://localhost/svn/myrepo`를 입력합
 | `SVNGO_SVNAUTHZ` | 자동 탐색 | authz 검증 도구 경로(`svngo-authz` 또는 `svnauthz`). 없거나 자체 점검에 실패하면 시작하지 않습니다. |
 | `SVNGO_TLS_CERT` / `SVNGO_TLS_KEY` | `/data/config/tls/server.crt` / `.key` | 이 파일들이 있으면 8443 포트에서 HTTPS를 켭니다. |
 | `TZ` | `Asia/Seoul` | 표시 시간대 |
+
+## 컨테이너 보안 옵션
+
+`docker-compose.yml`에는 다음 보안 옵션이 기본으로 들어 있습니다. 모두 빼도 기능은 똑같이 동작하지만, 그대로 두는 것을 권장합니다.
+
+```yaml
+    read_only: true
+    tmpfs:
+      - /run/svngo:size=16m,mode=0750,uid=1000,gid=1000
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+```
+
+### `read_only: true` (읽기 전용 루트 파일시스템)
+
+컨테이너의 루트 파일시스템(이미지 내용)을 읽기 전용으로 마운트합니다. `docker run`에서는 `--read-only`입니다.
+
+- 쓸 수 있는 곳은 명시적으로 마운트한 볼륨과 tmpfs뿐이고, `/usr/local/bin`이나 `/etc` 같은 나머지 경로는 쓰기가 막힙니다.
+- 취약점을 통해 컨테이너 안에서 코드가 실행되더라도 실행 파일이나 Apache 설정을 바꾸거나 파일을 심을 수 없습니다.
+- 데이터가 이미지 계층이 아니라 볼륨에만 쌓이므로, 컨테이너를 다시 만들어도 상태가 섞이지 않습니다.
+
+SvnGo가 쓰기를 하는 경로는 다음과 같습니다.
+
+| 경로 | 종류 | 용도 |
+|---|---|---|
+| `/data/repos`, `/data/config`, `/data/db`, `/data/backups` | 볼륨 또는 바인드 마운트 | 저장소, htpasswd·authz, SQLite DB, 백업 (영구 보관) |
+| `/run/svngo` | tmpfs (메모리) | Apache PID 파일과 SSL 세션 캐시, SVN 로그인 차단 목록, svn 클라이언트 설정, authz 자체 점검용 임시 파일 |
+| `/tmp` | tmpfs (메모리) | SQLite와 라이브러리가 쓰는 임시 파일 |
+
+- `read_only: true`를 쓸 때는 `tmpfs:` 두 항목이 반드시 함께 있어야 합니다. 없으면 Apache가 PID 파일을 만들지 못해 시작에 실패합니다.
+- `/run/svngo`는 컨테이너 사용자(uid/gid 1000)가 쓸 수 있도록 `uid=1000,gid=1000`을 지정합니다. 이미지를 다른 UID로 빌드했다면 이 값도 맞춰 바꾸세요.
+- tmpfs는 메모리에 있어 재시작하면 지워지지만, 여기에는 시작할 때 다시 만드는 데이터만 들어갑니다. SVN 로그인 차단 목록이 재시작 후 초기화되는 이유도 이 때문입니다.
+- `read_only: false`로 바꿔도 기능은 같고, 보호 장치 하나가 빠질 뿐입니다. `디렉터리 쓰기 권한 없음` 오류는 이 옵션과 관계없는 볼륨 소유권 문제입니다([시놀로지 안내](#1-데이터-폴더-준비-필수) 참고).
+
+### 그 밖의 옵션
+
+| 옵션 | 설명 |
+|---|---|
+| `cap_drop: ALL` | 리눅스 커널 권한(capability)을 모두 제거합니다. 1024 미만 포트를 열지 않고 non-root로 실행하므로 필요한 권한이 없습니다. 대신 컨테이너 안에서 파일 소유자를 바꿀 수 없어, 바인드 마운트 폴더는 호스트에서 소유권을 맞춰야 합니다. |
+| `no-new-privileges:true` | setuid 실행 파일 등으로 권한이 올라가는 것을 막습니다. 일부 Linux 호스트에서 문제가 생기면 [제한 사항](#제한-사항)을 참고하세요. |
 
 ## HTTPS 설정
 
@@ -141,6 +336,113 @@ HTTPS가 켜지면 HSTS 헤더와 Secure 쿠키가 자동으로 적용됩니다.
 **방법 2: 외부 리버스 프록시**
 
 Nginx, Traefik, Caddy 같은 프록시에서 TLS를 종료하고 `http://<컨테이너>:8080`으로 전달합니다. 프록시가 `X-Forwarded-Proto: https`를 보내면 Secure 쿠키가 적용됩니다. 쿠키를 항상 Secure로 하려면 `SVNGO_COOKIE_SECURE=always`를 지정하세요.
+
+## 시놀로지(Synology) NAS에서 실행하기
+
+DSM 7.2 이상의 **Container Manager** 기준입니다. 배포 이미지(`isul/svngo`)는 linux/amd64 전용이라 Intel/AMD CPU 모델에서 실행됩니다. ARM CPU 모델은 [멀티 아키텍처 빌드](#멀티-아키텍처-빌드)로 arm64 이미지를 직접 만들어 사용하세요.
+
+### 1. 데이터 폴더 준비 (필수)
+
+컨테이너는 uid/gid 1000으로 실행되고 `cap_drop: ALL`이라 컨테이너 안에서는 폴더 권한을 바꿀 수 없습니다. DSM 공유 폴더는 소유자가 DSM 사용자(uid 1026 이상)이고 ACL이 걸려 있으며, 없는 폴더를 마운트하면 Docker가 root 소유로 만듭니다. 그대로 마운트하면 다음 오류로 시작하지 않습니다.
+
+```
+오류: 디렉터리 쓰기 권한 없음 /data/repos (볼륨 소유권을 확인하세요): open /data/repos/.svngo-write-test: permission denied
+```
+
+**제어판 → 터미널 및 SNMP**에서 SSH를 켜고 Windows PowerShell에서 NAS에 접속합니다.
+
+```powershell
+ssh <DSM관리자계정>@<NAS주소>
+```
+
+NAS 셸에서 네 폴더를 만들고 ACL을 제거한 뒤 소유자를 uid/gid 1000으로 바꿉니다. `BASE`는 환경에 맞게 바꾸세요. 이미 데이터가 있는 폴더에도 그대로 실행할 수 있습니다.
+
+```bash
+BASE=/volume1/docker/svngo
+for d in repos config db backups; do
+  sudo mkdir -p "$BASE/$d"
+  sudo find "$BASE/$d" -exec /usr/syno/bin/synoacltool -del {} \; >/dev/null 2>&1
+  sudo chown -R 1000:1000 "$BASE/$d"
+  sudo chmod -R u+rwX,g+rX,o-rwx "$BASE/$d"
+done
+ls -ln "$BASE"   # 네 폴더 모두 소유자가 1000 1000 이면 정상
+```
+
+저장소를 다른 공유 폴더(예: `/volume2/DEV/svn`)에 두려면 그 폴더에도 같은 명령을 실행합니다. 공유 폴더 전체가 아니라 SvnGo 전용 하위 폴더에만 적용하세요.
+
+### 2. 프로젝트 만들기
+
+**Container Manager → 프로젝트 → 생성**에서 프로젝트 이름(`svngo`)과 경로(`/volume1/docker/svngo`)를 지정하고, 원본으로 **docker-compose.yml 만들기**를 선택해 다음 내용을 붙여 넣습니다. DSM이 80/443 포트를 사용하므로 다른 호스트 포트를 씁니다.
+
+```yaml
+services:
+  svngo:
+    image: isul/svngo:latest
+    container_name: svngo
+    restart: unless-stopped
+    ports:
+      - "36900:8080"
+      - "36901:8443"
+    environment:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: Change-Me-123   # 8자 이상, 최초 실행 시에만 사용됩니다
+      SVNGO_SERVER_NAME: nas.example.com
+      TZ: Asia/Seoul
+    volumes:
+      - /volume1/docker/svngo/repos:/data/repos
+      - /volume1/docker/svngo/config:/data/config
+      - /volume1/docker/svngo/db:/data/db
+      - /volume1/docker/svngo/backups:/data/backups
+    read_only: true
+    tmpfs:
+      - /run/svngo:size=16m,mode=0750,uid=1000,gid=1000
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+```
+
+DSM 방화벽을 쓰고 있다면 **제어판 → 보안 → 방화벽**에서 36900, 36901 포트를 허용합니다. 시작 후 다음 주소로 접속합니다.
+
+| 용도 | URL |
+|---|---|
+| 웹 관리 UI | `http://<NAS주소>:36900/admin/` |
+| SVN 저장소 | `http://<NAS주소>:36900/svn/<저장소명>` |
+
+### 3. HTTPS (DSM 인증서 사용)
+
+DSM에 등록된 인증서(Let's Encrypt 등)를 config 폴더의 `tls/`로 복사하면 컨테이너가 36901 포트에서 HTTPS를 켭니다. 아래는 DSM 기본 인증서를 복사하는 예입니다.
+
+```bash
+ARCHIVE=/usr/syno/etc/certificate/_archive
+CERT="$ARCHIVE/$(sudo cat $ARCHIVE/DEFAULT)"
+TLS=/volume1/docker/svngo/config/tls
+sudo mkdir -p "$TLS"
+sudo cp "$CERT/fullchain.pem" "$TLS/server.crt"
+sudo cp "$CERT/privkey.pem" "$TLS/server.key"
+sudo chown -R 1000:1000 "$TLS"
+sudo chmod 700 "$TLS" && sudo chmod 644 "$TLS/server.crt" && sudo chmod 600 "$TLS/server.key"
+sudo docker restart svngo
+```
+
+인증서가 갱신되면 다시 복사해야 하므로, 위 명령을 **제어판 → 작업 스케줄러 → 사용자 정의 스크립트**(사용자 `root`, 매주 실행)로 등록해 두면 편합니다. 작업 스케줄러에서는 `sudo` 없이 작성해도 됩니다.
+
+SVN은 `https://<NAS주소>:36901/svn/<저장소명>`처럼 컨테이너 HTTPS 포트로 직접 접속하는 것을 권장합니다. DSM **역방향 프록시**로 HTTPS를 종료하고 `http://localhost:36900`으로 넘기면 웹 UI, checkout, commit은 동작합니다. 하지만 브랜치·태그 생성(`svn copy`)과 `svn move`는 요청 주소의 scheme(https)과 서버 scheme(http)이 달라 `502 Bad Gateway`(`Destination URI refers to different scheme or port`)로 실패할 수 있습니다.
+
+### 4. 운영 팁
+
+- Container Manager에서 만든 컨테이너도 SSH에서 `sudo docker` 명령으로 다룰 수 있습니다.
+
+  ```bash
+  sudo docker logs -f svngo
+  echo 'New-Admin-Pass-123' | sudo docker exec -i svngo svngo admin-passwd admin
+  ```
+
+- 저장소 폴더에 생기는 `#recycle`, `@eaDir` 같은 DSM 시스템 폴더는 저장소 스캔에서 자동으로 제외됩니다.
+- Hyper Backup이나 스냅샷으로 백업할 때는 네 폴더(`repos`, `config`, `db`, `backups`)를 함께 포함하세요.
+- 컨테이너 안의 모든 실행 파일이 `operation not permitted`로 실패하면 `security_opt` 항목을 제거하세요.
 
 ## 기존 SVN 서버에서 이전하기
 
@@ -257,9 +559,11 @@ internal/
   logring/            최근 로그 보관(메모리)
 docker/httpd.conf  Apache 설정 (mod_dav_svn, authz_svn, proxy)
 docker/svngo-authz.c  libsvn 기반 authz 검증 도구 (svnauthz 호환)
+docker/DOCKERHUB.md   Docker Hub 저장소 설명 (isul/svngo Overview)
 Dockerfile         멀티 스테이지 빌드 (Go → C 헬퍼 → alpine 런타임)
 docker-compose.yml 운영용 compose
 e2e/               Docker E2E 테스트
+docs/images/       README 화면 캡처
 ```
 
 ## 제한 사항

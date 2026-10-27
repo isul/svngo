@@ -3,6 +3,7 @@
 *.md
 !README.md
 e2e
+docs
 data
 docker-compose*.yml
 *_test.go
