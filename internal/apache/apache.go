@@ -37,6 +37,8 @@ type Supervisor struct {
 	tls       bool
 	done      chan struct{}
 
+	applyMu sync.Mutex // serializes ApplySvnAccess
+
 	// OnAuthFail receives the client IP of every failed SVN Basic login.
 	OnAuthFail func(ip string)
 }
@@ -77,6 +79,7 @@ func (ap *Supervisor) env() []string {
 		"SVNGO_SVN_MAX_BODY=" + strconv.FormatInt(ap.cfg.SvnMaxBody, 10),
 		"SVNGO_SVN_MAX_XML=" + strconv.FormatInt(ap.cfg.SvnMaxXML, 10),
 		"SVNGO_SVN_BLOCK_MAP=" + filepath.Join(ap.cfg.RunDir, blockFile),
+		"SVNGO_SVN_ACCESS_CONF=" + AccessFile(ap.cfg.RunDir),
 	}
 	if tz, ok := os.LookupEnv("TZ"); ok {
 		env = append(env, "TZ="+tz)
@@ -97,16 +100,23 @@ func fileExists(p string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
-// Check validates the Apache configuration (httpd -t).
+// Check decides whether HTTPS is enabled and validates the Apache
+// configuration (httpd -t). Call it once before Run.
 func (ap *Supervisor) Check(ctx context.Context) error {
 	ap.tls = fileExists(ap.cfg.TLSCert) && fileExists(ap.cfg.TLSKey)
+	return ap.test(ctx)
+}
+
+// test runs httpd -t with the arguments of the running server; env entries
+// override the defaults.
+func (ap *Supervisor) test(ctx context.Context, env ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, ap.cfg.ApacheBin, ap.args("-t")...)
-	c.Env = ap.env()
+	c.Env = append(ap.env(), env...)
 	out, err := c.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Apache 설정 검사 실패: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("Apache config test failed: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -137,7 +147,7 @@ func (ap *Supervisor) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		msg := "정상 종료"
+		msg := "exited normally"
 		if err != nil {
 			msg = err.Error()
 		}
@@ -148,7 +158,7 @@ func (ap *Supervisor) Run(ctx context.Context) {
 		if time.Since(started) > time.Minute {
 			backoff = time.Second
 		}
-		slog.Error("Apache 가 종료되어 재시작합니다", "err", msg, "backoff", backoff.String())
+		slog.Error("Apache exited, restarting", "err", msg, "backoff", backoff.String())
 		select {
 		case <-ctx.Done():
 			return
@@ -171,12 +181,12 @@ func (ap *Supervisor) runOnce(ctx context.Context) error {
 		return err
 	}
 	if err := c.Start(); err != nil {
-		return fmt.Errorf("Apache 시작 실패: %w", err)
+		return fmt.Errorf("starting Apache failed: %w", err)
 	}
 	ap.mu.Lock()
 	ap.cmd, ap.pid, ap.startedAt, ap.running = c, c.Process.Pid, time.Now(), true
 	ap.mu.Unlock()
-	slog.Info("Apache 시작", "pid", c.Process.Pid, "http_port", ap.cfg.HTTPPort, "tls", ap.tls)
+	slog.Info("Apache started", "pid", c.Process.Pid, "http_port", ap.cfg.HTTPPort, "tls", ap.tls)
 
 	var wg sync.WaitGroup
 	wg.Add(2)

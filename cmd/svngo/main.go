@@ -36,14 +36,16 @@ func main() {
 		err = healthcheck()
 	case "admin-passwd":
 		err = adminPasswd(os.Args[2:])
+	case "access-reset":
+		err = accessReset(os.Args[2:])
 	case "version":
 		fmt.Println(server.AppName, server.Version)
 	default:
-		fmt.Fprintf(os.Stderr, "사용법: svngo [serve|healthcheck|admin-passwd <user>|version]\n")
+		fmt.Fprintf(os.Stderr, "usage: svngo [serve|healthcheck|admin-passwd <user>|access-reset [admin|svn|all]|version]\n")
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "오류:", err)
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
@@ -81,7 +83,7 @@ func healthcheck() error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("상태 점검 실패: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return fmt.Errorf("health check failed: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	return nil
 }
@@ -89,7 +91,7 @@ func healthcheck() error {
 // adminPasswd sets/creates a web admin password; the password is read from stdin.
 func adminPasswd(args []string) error {
 	if len(args) != 1 {
-		return errors.New("사용법: svngo admin-passwd <관리자ID>  (새 비밀번호는 표준입력으로 전달)")
+		return errors.New("usage: svngo admin-passwd <admin-id>  (the new password is read from standard input)")
 	}
 	user := args[0]
 	if err := validate.Username(user); err != nil {
@@ -99,10 +101,10 @@ func adminPasswd(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(os.Stderr, "새 비밀번호: ")
+	fmt.Fprint(os.Stderr, "New password: ")
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil && line == "" {
-		return errors.New("비밀번호를 읽을 수 없습니다")
+		return errors.New("cannot read the password")
 	}
 	pw := strings.TrimRight(line, "\r\n")
 	if err := validate.Password(pw); err != nil {
@@ -124,6 +126,50 @@ func adminPasswd(args []string) error {
 	}
 	db.ExecContext(ctx, "DELETE FROM sessions WHERE kind='admin' AND username=?", user)
 	store.Audit(ctx, db, "cli", "admin.passwd", user)
-	fmt.Fprintln(os.Stderr, "\n관리자 비밀번호가 설정되었습니다:", user)
+	fmt.Fprintln(os.Stderr, "\nAdmin password set:", user)
+	return nil
+}
+
+// accessReset clears the IP allow lists edited in the web UI (recovery after
+// a lockout). Lists fixed by environment variables stay in effect.
+func accessReset(args []string) error {
+	which := "admin"
+	if len(args) > 1 {
+		return errors.New("usage: svngo access-reset [admin|svn|all]")
+	}
+	if len(args) == 1 {
+		which = args[0]
+	}
+	var keys []string
+	switch which {
+	case "admin":
+		keys = []string{"admin_allow_ips"}
+	case "svn":
+		keys = []string{"svn_allow_ips"}
+	case "all":
+		keys = []string{"admin_allow_ips", "svn_allow_ips"}
+	default:
+		return errors.New("usage: svngo access-reset [admin|svn|all]")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	db, err := store.Open(cfg.DBFile())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx := context.Background()
+	for _, k := range keys {
+		if err := store.SetSetting(ctx, db, k, ""); err != nil {
+			return err
+		}
+	}
+	store.Audit(ctx, db, "cli", "allowip.reset", which)
+	fmt.Fprintf(os.Stderr, "IP allow lists cleared (%s). The admin UI applies this immediately, SVN within 20 seconds.\n", which)
+	if !cfg.AdminAllowEnv.Empty() || !cfg.SvnAllowEnv.Empty() {
+		fmt.Fprintln(os.Stderr, "SVNGO_ADMIN_ALLOW_IPS / SVNGO_SVN_ALLOW_IPS still apply; change them in the environment and restart to remove them.")
+	}
 	return nil
 }

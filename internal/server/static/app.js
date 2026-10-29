@@ -10,7 +10,7 @@
       input.select();
       var done = function () {
         var old = btn.textContent;
-        btn.textContent = "복사됨";
+        btn.textContent = btn.getAttribute("data-copied") || "Copied";
         setTimeout(function () { btn.textContent = old; }, 1500);
       };
       if (navigator.clipboard && window.isSecureContext) {

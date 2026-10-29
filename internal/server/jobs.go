@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"svngo/internal/i18n"
 	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/validate"
@@ -29,18 +29,6 @@ type JobRow struct {
 	Message    string
 	StartedAt  int64
 	FinishedAt int64
-}
-
-func (j JobRow) KindLabel() string {
-	switch j.Kind {
-	case "backup":
-		return "백업"
-	case "verify":
-		return "검증"
-	case "restore":
-		return "복원"
-	}
-	return j.Kind
 }
 
 func (a *App) listJobs(ctx context.Context, repo string, limit int) ([]JobRow, error) {
@@ -71,7 +59,7 @@ func hasActiveJobs(jobs []JobRow) bool {
 
 // startJob runs a long operation (backup/verify/restore) asynchronously.
 // At most two jobs run at the same time; the rest wait in "queued" state.
-func (a *App) startJob(actor, kind, repo string, fn func(ctx context.Context) (string, error)) (int64, error) {
+func (a *App) startJob(actor, kind, repo string, fn func(ctx context.Context) (i18n.Msg, error)) (int64, error) {
 	res, err := a.db.ExecContext(a.ctx, `INSERT INTO jobs(kind, repo, actor, status, started_at) VALUES(?,?,?,'queued',?)`,
 		kind, repo, actor, store.Now())
 	if err != nil {
@@ -82,21 +70,25 @@ func (a *App) startJob(actor, kind, repo string, fn func(ctx context.Context) (s
 	a.jobsWG.Add(1)
 	go func() {
 		defer a.jobsWG.Done()
-		finish := func(status, msg string) {
+		finish := func(status string, msg i18n.Msg) {
+			enc := i18n.Encode(msg)
+			if len(enc) > 2000 {
+				enc = validate.Clip(msg.String(), 2000)
+			}
 			a.db.ExecContext(context.Background(), "UPDATE jobs SET status=?, message=?, finished_at=? WHERE id=?",
-				status, validate.Clip(msg, 2000), store.Now(), id)
+				status, enc, store.Now(), id)
 		}
 		select {
 		case a.jobSem <- struct{}{}:
 		case <-a.ctx.Done():
-			finish("failed", "서버 종료로 취소됨")
+			finish("failed", i18n.M("job.canceled_shutdown"))
 			return
 		}
 		defer func() { <-a.jobSem }()
 		defer func() {
 			if p := recover(); p != nil {
-				slog.Error("작업 패닉", "job", id, "panic", p)
-				finish("failed", fmt.Sprint("내부 오류: ", p))
+				slog.Error("job panicked", "job", id, "panic", p)
+				finish("failed", i18n.Msg{Key: "err.internal", Inner: &i18n.Msg{Raw: fmt.Sprint(p)}})
 			}
 		}()
 		a.db.ExecContext(a.ctx, "UPDATE jobs SET status='running', started_at=? WHERE id=?", store.Now(), id)
@@ -105,43 +97,43 @@ func (a *App) startJob(actor, kind, repo string, fn func(ctx context.Context) (s
 		start := time.Now()
 		msg, err := fn(ctx)
 		if err != nil {
-			slog.Error("작업 실패", "job", id, "kind", kind, "repo", repo, "err", err)
-			finish("failed", err.Error())
+			slog.Error("job failed", "job", id, "kind", kind, "repo", repo, "err", err)
+			finish("failed", i18n.FromErr(err))
 			return
 		}
-		slog.Info("작업 완료", "job", id, "kind", kind, "repo", repo, "elapsed", time.Since(start).Round(time.Millisecond).String())
+		slog.Info("job finished", "job", id, "kind", kind, "repo", repo, "elapsed", time.Since(start).Round(time.Millisecond).String())
 		finish("ok", msg)
 	}()
 	return id, nil
 }
 
-func (a *App) jobVerify(name string) func(ctx context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
+func (a *App) jobVerify(name string) func(ctx context.Context) (i18n.Msg, error) {
+	return func(ctx context.Context) (i18n.Msg, error) {
 		dir := a.repoDir(name)
 		y, err := a.svn.Youngest(ctx, dir)
 		if err != nil {
-			return "", err
+			return i18n.Msg{}, err
 		}
 		if err := a.svn.Verify(ctx, dir); err != nil {
-			return "", fmt.Errorf("검증 실패: %w", err)
+			return i18n.Msg{}, i18n.Wrap(err, "job.err.verify")
 		}
-		return fmt.Sprintf("r0 ~ r%d 검증 성공", y), nil
+		return i18n.M("job.verify_ok", y), nil
 	}
 }
 
-func (a *App) jobBackup(name string) func(ctx context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
+func (a *App) jobBackup(name string) func(ctx context.Context) (i18n.Msg, error) {
+	return func(ctx context.Context) (i18n.Msg, error) {
 		dir := a.repoDir(name)
 		y, err := a.svn.Youngest(ctx, dir)
 		if err != nil {
-			return "", err
+			return i18n.Msg{}, err
 		}
 		fname := fmt.Sprintf("%s-%s-r%d.svndump.gz", name, time.Now().Format("20060102-150405"), y)
 		final := filepath.Join(a.cfg.BackupDir, fname)
 		tmp := filepath.Join(a.cfg.BackupDir, "."+fname+".partial")
 		f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
 		if err != nil {
-			return "", err
+			return i18n.Msg{}, err
 		}
 		defer os.Remove(tmp)
 		bw := bufio.NewWriterSize(f, 256<<10)
@@ -160,35 +152,35 @@ func (a *App) jobBackup(name string) func(ctx context.Context) (string, error) {
 			err = cerr
 		}
 		if err != nil {
-			return "", fmt.Errorf("백업 실패: %w", err)
+			return i18n.Msg{}, i18n.Wrap(err, "job.err.backup")
 		}
 		if err := os.Rename(tmp, final); err != nil {
-			return "", err
+			return i18n.Msg{}, err
 		}
 		st, _ := os.Stat(final)
-		return fmt.Sprintf("%s (%s, r%d)", fname, humanSize(st.Size()), y), nil
+		return i18n.Raw(fmt.Sprintf("%s (%s, r%d)", fname, humanSize(st.Size()), y)), nil
 	}
 }
 
-func (a *App) jobRestore(file, target string, overwrite bool, actor string) func(ctx context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
+func (a *App) jobRestore(file, target string, overwrite bool, actor string) func(ctx context.Context) (i18n.Msg, error) {
+	return func(ctx context.Context) (i18n.Msg, error) {
 		f, err := os.Open(filepath.Join(a.cfg.BackupDir, file))
 		if err != nil {
-			return "", err
+			return i18n.Msg{}, err
 		}
 		defer f.Close()
 		gz, err := gzip.NewReader(bufio.NewReaderSize(f, 256<<10))
 		if err != nil {
-			return "", fmt.Errorf("gzip 형식이 아닙니다: %w", err)
+			return i18n.Msg{}, i18n.Wrap(err, "job.err.not_gzip")
 		}
 		defer gz.Close()
 		tmp := filepath.Join(a.cfg.TmpDir(), "restore-"+passwd.RandomString(10, "abcdefghijklmnopqrstuvwxyz0123456789"))
 		defer os.RemoveAll(tmp)
 		if err := a.svn.Create(ctx, tmp); err != nil {
-			return "", err
+			return i18n.Msg{}, err
 		}
 		if err := a.svn.Load(ctx, tmp, gz); err != nil {
-			return "", fmt.Errorf("svnadmin load 실패: %w", err)
+			return i18n.Msg{}, i18n.Wrap(err, "job.err.load")
 		}
 		final := a.repoDir(target)
 		trash, placed := "", false
@@ -197,11 +189,11 @@ func (a *App) jobRestore(file, target string, overwrite bool, actor string) func
 			exists := tx.QueryRowContext(ctx, "SELECT id FROM repos WHERE name=?", target).Scan(&id) == nil
 			_, statErr := os.Lstat(final)
 			if (exists || statErr == nil) && !overwrite {
-				return errors.New("대상 저장소가 이미 존재합니다 (덮어쓰기를 선택하지 않음)")
+				return i18n.E("job.err.target_exists")
 			}
 			if !exists {
 				if _, err := tx.ExecContext(ctx, "INSERT INTO repos(name, description, created_at) VALUES(?,?,?)",
-					target, "백업에서 복원: "+file, store.Now()); err != nil {
+					target, a.i18n.For(a.defaultLang(ctx)).T("job.restored_desc", file), store.Now()); err != nil {
 					return err
 				}
 			} else if _, err := tx.ExecContext(ctx, "UPDATE repos SET size_bytes=-1 WHERE id=?", id); err != nil {
@@ -229,13 +221,13 @@ func (a *App) jobRestore(file, target string, overwrite bool, actor string) func
 					os.Rename(trash, final)
 				}
 			}
-			return "", err
+			return i18n.Msg{}, err
 		}
 		if trash != "" {
 			os.RemoveAll(trash)
 		}
 		y, _ := a.svn.Youngest(ctx, final)
-		return fmt.Sprintf("'%s' 복원 완료 (r%d)", target, y), nil
+		return i18n.M("job.restore_ok", target, y), nil
 	}
 }
 

@@ -1,51 +1,51 @@
 {{define "content"}}
 {{template "system_tabs" .}}
 <section class="box">
-  <h2>작업</h2>
+  <h2>{{t "backups.jobs"}}</h2>
   {{template "jobs" (dict "Jobs" .D.Jobs "Repo" "")}}
 </section>
 
 <section class="box">
-  <div class="box-head"><h2>백업 파일</h2><span class="muted small">여유 공간 {{size .D.Disk.Free}}</span></div>
+  <div class="box-head"><h2>{{t "backups.files"}}</h2><span class="muted small">{{t "backups.free" (size .D.Disk.Free)}}</span></div>
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>파일</th><th class="num">크기</th><th class="hide-sm">생성</th><th></th></tr></thead>
+    <thead><tr><th>{{t "backups.col.file"}}</th><th class="num">{{t "common.size"}}</th><th class="hide-sm">{{t "backups.col.created"}}</th><th></th></tr></thead>
     <tbody>{{range .D.Backups}}<tr>
       <td class="break"><a hx-boost="false" href="/admin/system/backups/{{.Name}}" download>{{.Name}}</a></td>
       <td class="num nowrap">{{size .Size}}</td>
       <td class="hide-sm nowrap small">{{dt .ModTime}}</td>
       <td class="right">
-        <form method="post" action="/admin/system/backups/{{.Name}}/delete" class="inline" hx-confirm="백업 파일 {{.Name}} 을 삭제할까요?">
+        <form method="post" action="/admin/system/backups/{{.Name}}/delete" class="inline" hx-confirm="{{t "backups.delete_confirm" .Name}}">
           <input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="back" value="/admin/system/backups">
-          <button class="btn sm danger">삭제</button>
+          <button class="btn sm danger">{{t "common.delete"}}</button>
         </form>
       </td>
-    </tr>{{else}}<tr><td colspan="4" class="empty">백업 파일이 없습니다. 저장소 설정 화면에서 백업을 실행하세요.</td></tr>{{end}}</tbody>
+    </tr>{{else}}<tr><td colspan="4" class="empty">{{t "backups.none"}}</td></tr>{{end}}</tbody>
   </table></div>
 </section>
 
 <div class="grid2">
   <section class="box">
-    <h2>복원</h2>
+    <h2>{{t "backups.restore"}}</h2>
     <form method="post" action="/admin/system/restore" class="form">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <label>백업 파일<select name="file" required><option value="">선택…</option>{{range .D.Backups}}<option value="{{.Name}}">{{.Name}}</option>{{end}}</select></label>
-      <label>대상 저장소 이름 <span class="muted small">(새 이름이면 새 저장소로 복원)</span>
+      <label>{{t "backups.restore_file"}}<select name="file" required><option value="">{{t "common.select"}}</option>{{range .D.Backups}}<option value="{{.Name}}">{{.Name}}</option>{{end}}</select></label>
+      <label>{{t "backups.restore_target"}} <span class="muted small">({{t "backups.restore_target_hint"}})</span>
         <input name="target" required maxlength="64" list="repo-names" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}"></label>
       <datalist id="repo-names">{{range .D.Repos}}<option value="{{.}}">{{end}}</datalist>
-      <label class="check"><input type="checkbox" name="overwrite" value="1"> 기존 저장소 덮어쓰기 (기존 내용은 교체됩니다)</label>
-      <label>덮어쓰기 확인: 대상 저장소 이름 재입력<input name="confirm" maxlength="64" autocomplete="off"></label>
-      <button class="btn primary">복원 시작</button>
+      <label class="check"><input type="checkbox" name="overwrite" value="1"> {{t "backups.overwrite"}}</label>
+      <label>{{t "backups.overwrite_confirm"}}<input name="confirm" maxlength="64" autocomplete="off"></label>
+      <button class="btn primary">{{t "backups.restore_start"}}</button>
     </form>
-    <p class="muted small">임시 저장소에 svnadmin load 로 복원한 뒤 검증이 끝나면 원자적으로 교체합니다. 기존 저장소의 권한 규칙은 유지됩니다.</p>
+    <p class="muted small">{{t "backups.restore_hint"}}</p>
   </section>
   <section class="box">
-    <h2>덤프 파일 업로드</h2>
+    <h2>{{t "backups.upload"}}</h2>
     <form method="post" action="/admin/system/upload" class="form" enctype="multipart/form-data" hx-boost="false">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <label>파일 (.svndump 또는 .svndump.gz)<input type="file" name="file" required></label>
-      <button class="btn primary">업로드</button>
+      <label>{{t "backups.upload_file"}}<input type="file" name="file" required></label>
+      <button class="btn primary">{{t "common.upload"}}</button>
     </form>
-    <p class="muted small">다른 서버에서 <code>svnadmin dump</code> 로 만든 파일을 올려 복원할 수 있습니다. 대용량 파일도 스트리밍으로 저장됩니다.</p>
+    <p class="muted small">{{th "backups.upload_hint" (code "svnadmin dump")}}</p>
   </section>
 </div>
 {{end}}

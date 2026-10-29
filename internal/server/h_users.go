@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -13,6 +12,7 @@ import (
 	"strings"
 
 	"svngo/internal/authz"
+	"svngo/internal/i18n"
 	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/validate"
@@ -52,7 +52,7 @@ func cleanEmail(s string) (string, error) {
 		return "", nil
 	}
 	if len(s) > 254 || !strings.Contains(s, "@") || strings.ContainsAny(s, " <>\"'\r\n\t") {
-		return "", errors.New("이메일 형식이 올바르지 않습니다")
+		return "", i18n.E("user.err.email")
 	}
 	return s, nil
 }
@@ -78,7 +78,7 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request, s *Session) {
 		COALESCE((SELECT group_concat(g.name, ', ') FROM group_members m JOIN groups g ON g.id=m.group_id WHERE m.user_id=users.id),'')
 		FROM users WHERE `+where+` ORDER BY username LIMIT ? OFFSET ?`, like, like, like, pg.Size, pg.Offset())
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	defer rows.Close()
@@ -90,7 +90,7 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request, s *Session) {
 		}
 	}
 	groups, _ := a.groupNames(ctx)
-	a.render(w, r, s, http.StatusOK, "users", &View{Title: "사용자", Nav: "users", D: map[string]any{
+	a.render(w, r, s, http.StatusOK, "users", &View{Title: i18n.M("nav.users"), Nav: "users", D: map[string]any{
 		"Users": users, "Pager": pg, "Q": q, "Status": status, "Groups": groups,
 	}})
 }
@@ -123,7 +123,7 @@ func setUserGroups(ctx context.Context, tx *sql.Tx, userID int64, groups []strin
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("그룹을 찾을 수 없습니다: %s", g)
+			return i18n.E("group.err.not_found", g)
 		}
 	}
 	return nil
@@ -144,7 +144,7 @@ func (a *App) handleUserCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 			return err
 		}
 		if pw != pw2 {
-			return errors.New("비밀번호 확인이 일치하지 않습니다")
+			return i18n.E("err.password_mismatch")
 		}
 		if err := validate.Password(pw); err != nil {
 			return err
@@ -158,7 +158,7 @@ func (a *App) handleUserCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 				VALUES(?,?,?,?,1,?,?)`, name, full, email, hash, store.Now(), store.Now())
 			if err != nil {
 				if strings.Contains(err.Error(), "UNIQUE") {
-					return errors.New("이미 존재하는 사용자입니다")
+					return i18n.E("user.err.exists")
 				}
 				return err
 			}
@@ -171,10 +171,10 @@ func (a *App) handleUserCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 		return a.verifyHtpasswdEntry(name, pw, true)
 	}()
 	if err != nil {
-		a.done(w, r, "/admin/users", "", err)
+		a.done(w, r, "/admin/users", i18n.Msg{}, err)
 		return
 	}
-	a.done(w, r, "/admin/users/"+name, "사용자 '"+name+"' 를 생성했고 SVN 인증 파일(htpasswd)에 반영을 확인했습니다. 저장소 권한을 부여하세요.", nil)
+	a.done(w, r, "/admin/users/"+name, i18n.M("user.created_msg", name), nil)
 }
 
 func (a *App) handleUserImport(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -187,7 +187,7 @@ func (a *App) handleUserImport(w http.ResponseWriter, r *http.Request, s *Sessio
 	}
 	entries, rejected, err := passwd.ParseHtpasswd(src)
 	if err == nil && len(entries) == 0 {
-		err = errors.New("가져올 항목이 없습니다")
+		err = i18n.E("user.err.import_empty")
 	}
 	added, updated, skipped := 0, 0, 0
 	if err == nil {
@@ -216,14 +216,19 @@ func (a *App) handleUserImport(w http.ResponseWriter, r *http.Request, s *Sessio
 			return nil
 		})
 	}
-	msg := fmt.Sprintf("가져오기 완료: 추가 %d, 갱신 %d, 건너뜀 %d, 거부 %d.", added, updated, skipped, len(rejected))
+	l := a.loc(r)
+	msg := l.T("user.import_done", added, updated, skipped, len(rejected))
 	if len(rejected) > 0 {
-		msg += " 거부: " + strings.Join(rejected[:min(len(rejected), 10)], "; ")
+		parts := make([]string, 0, 10)
+		for _, m := range rejected[:min(len(rejected), 10)] {
+			parts = append(parts, l.Msg(m))
+		}
+		msg += " " + l.T("user.import_rejected", strings.Join(parts, "; "))
 	}
 	if err == nil {
-		msg += " APR1-MD5 사용자는 웹 로그인 시 bcrypt 로 자동 전환되며, 관리자가 비밀번호를 재설정할 수도 있습니다."
+		msg += " " + l.T("user.import_apr1")
 	}
-	a.done(w, r, "/admin/users", msg, err)
+	a.done(w, r, "/admin/users", i18n.Raw(msg), err)
 }
 
 func (a *App) handleUserEdit(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -251,7 +256,7 @@ func (a *App) renderUserEdit(w http.ResponseWriter, r *http.Request, s *Session,
 			effective = append(effective, eff{repo, acc})
 		}
 	}
-	a.render(w, r, s, http.StatusOK, "user_edit", &View{Title: u.Username, Nav: "users", D: map[string]any{
+	a.render(w, r, s, http.StatusOK, "user_edit", &View{Title: i18n.Raw(u.Username), Nav: "users", D: map[string]any{
 		"User": u, "Groups": groups, "Member": member, "Rules": direct, "Effective": effective,
 		"TempPassword": tempPassword, "SvnBase": a.svnBaseURL(r),
 	}})
@@ -272,7 +277,7 @@ func (a *App) handleUserUpdate(w http.ResponseWriter, r *http.Request, s *Sessio
 			return err
 		})
 	}
-	a.done(w, r, "/admin/users/"+u.Username, "사용자 정보를 저장했습니다.", err)
+	a.done(w, r, "/admin/users/"+u.Username, i18n.M("user.saved"), err)
 }
 
 func (a *App) handleUserPassword(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -285,7 +290,7 @@ func (a *App) handleUserPassword(w http.ResponseWriter, r *http.Request, s *Sess
 	pw, pw2 := r.PostFormValue("password"), r.PostFormValue("password2")
 	err = func() error {
 		if pw != pw2 {
-			return errors.New("비밀번호 확인이 일치하지 않습니다")
+			return i18n.E("err.password_mismatch")
 		}
 		if err := validate.Password(pw); err != nil {
 			return err
@@ -296,9 +301,9 @@ func (a *App) handleUserPassword(w http.ResponseWriter, r *http.Request, s *Sess
 		_, err := a.db.ExecContext(ctx, "DELETE FROM sessions WHERE kind='user' AND principal_id=?", u.ID)
 		return err
 	}()
-	msg := "비밀번호를 변경했습니다. 기존 비밀번호는 SVN 에서 즉시 거부됩니다."
+	msg := i18n.M("user.password_changed")
 	if !u.Enabled {
-		msg = "비밀번호를 변경했습니다. (사용자가 비활성 상태이므로 활성화 후 사용할 수 있습니다)"
+		msg = i18n.M("user.password_changed_disabled")
 	}
 	a.done(w, r, "/admin/users/"+u.Username, msg, err)
 }
@@ -312,7 +317,7 @@ func (a *App) handleUserReset(w http.ResponseWriter, r *http.Request, s *Session
 	}
 	pw := passwd.Generate()
 	if err := a.setUserPassword(ctx, s.Username, u.ID, pw); err != nil {
-		a.done(w, r, "/admin/users/"+u.Username, "", err)
+		a.done(w, r, "/admin/users/"+u.Username, i18n.Msg{}, err)
 		return
 	}
 	a.db.ExecContext(ctx, "DELETE FROM sessions WHERE kind='user' AND principal_id=?", u.ID)
@@ -328,9 +333,9 @@ func (a *App) handleUserToggle(w http.ResponseWriter, r *http.Request, s *Sessio
 		a.notFound(w, r, s)
 		return
 	}
-	action, msg := "user.disable", "사용자를 비활성화했습니다. SVN 인증이 즉시 차단됩니다."
+	action, msg := "user.disable", i18n.M("user.disabled_msg")
 	if !u.Enabled {
-		action, msg = "user.enable", "사용자를 활성화했습니다."
+		action, msg = "user.enable", i18n.M("user.enabled_msg")
 	}
 	err = a.mutate(ctx, s.Username, action, u.Username, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "UPDATE users SET enabled=1-enabled, updated_at=? WHERE id=?", store.Now(), u.ID); err != nil {
@@ -360,7 +365,7 @@ func (a *App) handleUserGroups(w http.ResponseWriter, r *http.Request, s *Sessio
 	if err == nil {
 		err = a.verifyUserRules(ctx, u.Username)
 	}
-	a.done(w, r, "/admin/users/"+u.Username, "그룹 소속을 저장했습니다.", err)
+	a.done(w, r, "/admin/users/"+u.Username, i18n.M("user.groups_saved"), err)
 }
 
 // verifyUserRules cross-checks every rule path that may affect user with libsvn.
@@ -403,13 +408,13 @@ func (a *App) handleUserDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 		err = a.verifyHtpasswdEntry(u.Username, "", false)
 	}
 	if err != nil {
-		a.done(w, r, "/admin/users/"+u.Username, "", err)
+		a.done(w, r, "/admin/users/"+u.Username, i18n.Msg{}, err)
 		return
 	}
-	a.done(w, r, "/admin/users", "사용자 '"+u.Username+"' 를 삭제했습니다.", nil)
+	a.done(w, r, "/admin/users", i18n.M("user.deleted", u.Username), nil)
 }
 
-func readHtpasswdFile(path string) (map[string]string, []string, error) {
+func readHtpasswdFile(path string) (map[string]string, []i18n.Msg, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, err

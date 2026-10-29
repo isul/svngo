@@ -52,9 +52,18 @@ type web struct {
 var reCSRF = regexp.MustCompile(`name="_csrf" value="([^"]+)"`)
 var reAlertErr = regexp.MustCompile(`(?s)class="alert err"[^>]*>(.*?)</div>`)
 
+// koTransport asks for the Korean UI, which the page assertions use.
+type koTransport struct{}
+
+func (koTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Accept-Language", "ko")
+	return http.DefaultTransport.RoundTrip(r)
+}
+
 func newWeb(t *testing.T) *web {
 	jar, _ := cookiejar.New(nil)
-	return &web{t: t, c: &http.Client{Jar: jar, Timeout: 60 * time.Second,
+	return &web{t: t, c: &http.Client{Jar: jar, Timeout: 60 * time.Second, Transport: koTransport{},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 

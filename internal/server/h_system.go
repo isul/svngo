@@ -6,9 +6,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"svngo/internal/i18n"
 	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/validate"
@@ -104,12 +104,14 @@ func (a *App) systemView(r *http.Request) *View {
 	for k := range store.SettingDefaults {
 		settings[k] = store.Setting(ctx, a.db, k)
 	}
-	return &View{Title: "시스템 설정", Nav: "system", Tab: "status", D: map[string]any{
+	return &View{Title: i18n.M("nav.system"), Nav: "system", Tab: "status", D: map[string]any{
 		"Version": Version, "GoVersion": runtime.Version(), "Uptime": time.Since(a.started).Round(time.Second).String(),
 		"MemAlloc": int64(ms.HeapAlloc), "MemSys": int64(ms.Sys), "Goroutines": runtime.NumGoroutine(),
 		"Apache": a.apacheStatus(), "Versions": versions, "Disk": diskUsage(a.cfg.ReposDir), "BackupDisk": diskUsage(a.cfg.BackupDir),
 		"DBSize": dbSize, "Admins": admins, "Settings": settings, "Cfg": a.cfg, "AuthzTool": a.svn.Authz, "SvnBlocked": a.svnGuard.List(),
 		"Unregistered": a.unregisteredRepos(ctx), "SvnBase": a.svnBaseURL(r),
+		"Langs": a.i18n.List(), "DefaultLang": a.defaultLang(ctx), "LocaleErrors": a.i18n.LoadErrors(),
+		"LocalesDir": a.cfg.LocalesDir(), "Allow": a.allowView(r),
 	}}
 }
 
@@ -124,64 +126,72 @@ func (a *App) handleSettingsSave(w http.ResponseWriter, r *http.Request, s *Sess
 		if base != "" {
 			u, err := url.Parse(base)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.ContainsAny(base, " \"'<>") {
-				return errors.New("SVN 기본 URL 은 http:// 또는 https:// 로 시작해야 합니다")
+				return i18n.E("settings.err.base_url")
 			}
 		}
 		pageSize, err := strconv.Atoi(r.PostFormValue("page_size"))
 		if err != nil || pageSize < 10 || pageSize > 200 {
-			return errors.New("페이지 크기는 10~200 사이여야 합니다")
+			return i18n.E("settings.err.page_size")
 		}
 		attempts, err := strconv.Atoi(r.PostFormValue("login_attempts"))
 		if err != nil || attempts < 3 || attempts > 100 {
-			return errors.New("로그인 실패 허용 횟수는 3~100 사이여야 합니다")
+			return i18n.E("settings.err.login_attempts")
 		}
 		svnAttempts, err := strconv.Atoi(r.PostFormValue("svn_block_attempts"))
 		if err != nil || svnAttempts < 0 || svnAttempts > 1000 || (svnAttempts > 0 && svnAttempts < 3) {
-			return errors.New("SVN 로그인 실패 허용 횟수는 0(사용 안 함) 또는 3~1000 사이여야 합니다")
+			return i18n.E("settings.err.svn_block_attempts")
 		}
 		svnMinutes, err := strconv.Atoi(r.PostFormValue("svn_block_minutes"))
 		if err != nil || svnMinutes < 1 || svnMinutes > 1440 {
-			return errors.New("SVN 차단 시간은 1~1440분 사이여야 합니다")
+			return i18n.E("settings.err.svn_block_minutes")
 		}
 		layout := "0"
 		if r.PostFormValue("default_layout") == "1" {
 			layout = "1"
 		}
-		for k, v := range map[string]string{"svn_base_url": base, "page_size": strconv.Itoa(pageSize),
+		values := map[string]string{"svn_base_url": base, "page_size": strconv.Itoa(pageSize),
 			"login_attempts": strconv.Itoa(attempts), "default_layout": layout,
-			"svn_block_attempts": strconv.Itoa(svnAttempts), "svn_block_minutes": strconv.Itoa(svnMinutes)} {
+			"svn_block_attempts": strconv.Itoa(svnAttempts), "svn_block_minutes": strconv.Itoa(svnMinutes)}
+		if v, ok := r.PostForm["default_lang"]; ok && len(v) > 0 {
+			lang := i18n.NormalizeCode(v[0])
+			if !a.i18n.Has(lang) {
+				return i18n.E("locale.err.unknown", lang)
+			}
+			values["default_lang"] = lang
+		}
+		for k, v := range values {
 			if err := store.SetSetting(ctx, a.db, k, v); err != nil {
 				return err
 			}
 		}
 		return store.Audit(ctx, a.db, s.Username, "settings.update", "")
 	}()
-	a.done(w, r, "/admin/system", "설정을 저장했습니다.", err)
+	a.done(w, r, "/admin/system", i18n.M("settings.saved"), err)
 }
 
 func (a *App) handleSvnUnblock(w http.ResponseWriter, r *http.Request, s *Session) {
 	ip := strings.TrimSpace(r.PostFormValue("ip"))
 	err := func() error {
 		if net.ParseIP(ip) == nil {
-			return errors.New("잘못된 IP 주소입니다")
+			return i18n.E("svnblock.err.ip")
 		}
 		ok, err := a.svnGuard.Unblock(ip)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return errors.New("차단 목록에 없는 IP 입니다 (이미 만료되었을 수 있습니다)")
+			return i18n.E("svnblock.err.not_blocked")
 		}
 		return store.Audit(r.Context(), a.db, s.Username, "svn.unblock", ip)
 	}()
-	a.done(w, r, "/admin/system", "SVN 접속 차단을 해제했습니다: "+ip, err)
+	a.done(w, r, "/admin/system", i18n.M("svnblock.unblocked", ip), err)
 }
 
 func (a *App) handleSyncCheck(w http.ResponseWriter, r *http.Request, s *Session) {
 	v := a.systemView(r)
 	rep, err := a.checkSync(r.Context())
 	if err != nil {
-		v.FlashErr = err.Error()
+		v.FlashErr = a.loc(r).Err(err)
 	}
 	v.D["Sync"] = rep
 	w.Header().Set("HX-Replace-Url", "/admin/system")
@@ -189,13 +199,13 @@ func (a *App) handleSyncCheck(w http.ResponseWriter, r *http.Request, s *Session
 }
 
 func (a *App) handleSyncRepair(w http.ResponseWriter, r *http.Request, s *Session) {
-	err := a.mutate(r.Context(), s.Username, "sync.repair", "htpasswd/authz 재생성", nil)
-	a.done(w, r, "/admin/system", "DB 기준으로 htpasswd / authz 파일을 다시 생성했습니다.", err)
+	err := a.mutate(r.Context(), s.Username, "sync.repair", "regenerate htpasswd/authz", nil)
+	a.done(w, r, "/admin/system", i18n.M("sync.repaired"), err)
 }
 
 func (a *App) handleRepoScan(w http.ResponseWriter, r *http.Request, s *Session) {
 	n, err := a.registerRepos(r.Context(), s.Username)
-	a.done(w, r, "/admin/system", fmt.Sprintf("저장소 %d개를 등록했습니다.", n), err)
+	a.done(w, r, "/admin/system", i18n.M("sync.registered", n), err)
 }
 
 func (a *App) handleAdminCreate(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -207,7 +217,7 @@ func (a *App) handleAdminCreate(w http.ResponseWriter, r *http.Request, s *Sessi
 			return err
 		}
 		if pw != pw2 {
-			return errors.New("비밀번호 확인이 일치하지 않습니다")
+			return i18n.E("err.password_mismatch")
 		}
 		if err := validate.Password(pw); err != nil {
 			return err
@@ -218,13 +228,13 @@ func (a *App) handleAdminCreate(w http.ResponseWriter, r *http.Request, s *Sessi
 		}
 		if _, err := a.db.ExecContext(ctx, "INSERT INTO admins(username, password_hash, created_at) VALUES(?,?,?)", name, hash, store.Now()); err != nil {
 			if strings.Contains(err.Error(), "UNIQUE") {
-				return errors.New("이미 존재하는 관리자입니다")
+				return i18n.E("admin.err.exists")
 			}
 			return err
 		}
 		return store.Audit(ctx, a.db, s.Username, "admin.create", name)
 	}()
-	a.done(w, r, "/admin/system", "관리자 '"+name+"' 를 추가했습니다.", err)
+	a.done(w, r, "/admin/system", i18n.M("admin.created", name), err)
 }
 
 func (a *App) handleAdminDelete(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -232,16 +242,16 @@ func (a *App) handleAdminDelete(w http.ResponseWriter, r *http.Request, s *Sessi
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	err := func() error {
 		if id == s.PrincipalID {
-			return errors.New("현재 로그인한 관리자는 삭제할 수 없습니다")
+			return i18n.E("admin.err.self")
 		}
 		var n int
 		a.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM admins").Scan(&n)
 		if n <= 1 {
-			return errors.New("마지막 관리자는 삭제할 수 없습니다")
+			return i18n.E("admin.err.last")
 		}
 		var name string
 		if err := a.db.QueryRowContext(ctx, "SELECT username FROM admins WHERE id=?", id).Scan(&name); err != nil {
-			return errors.New("관리자를 찾을 수 없습니다")
+			return i18n.E("admin.err.not_found")
 		}
 		if _, err := a.db.ExecContext(ctx, "DELETE FROM admins WHERE id=?", id); err != nil {
 			return err
@@ -249,7 +259,7 @@ func (a *App) handleAdminDelete(w http.ResponseWriter, r *http.Request, s *Sessi
 		a.db.ExecContext(ctx, "DELETE FROM sessions WHERE kind='admin' AND principal_id=?", id)
 		return store.Audit(ctx, a.db, s.Username, "admin.delete", name)
 	}()
-	a.done(w, r, "/admin/system", "관리자를 삭제했습니다.", err)
+	a.done(w, r, "/admin/system", i18n.M("admin.deleted"), err)
 }
 
 // ---- backups ----
@@ -258,11 +268,11 @@ func (a *App) handleBackups(w http.ResponseWriter, r *http.Request, s *Session) 
 	ctx := r.Context()
 	backups, err := a.listBackups("")
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	jobs, _ := a.listJobs(ctx, "", 20)
-	a.render(w, r, s, http.StatusOK, "backups", &View{Title: "백업 / 복원", Nav: "system", Tab: "backups", D: map[string]any{
+	a.render(w, r, s, http.StatusOK, "backups", &View{Title: i18n.M("system.tab.backups"), Nav: "system", Tab: "backups", D: map[string]any{
 		"Backups": backups, "Jobs": jobs, "Repos": a.repoNames(ctx), "Disk": diskUsage(a.cfg.BackupDir),
 	}})
 }
@@ -299,7 +309,7 @@ func (a *App) handleBackupDelete(w http.ResponseWriter, r *http.Request, s *Sess
 	if err == nil {
 		store.Audit(r.Context(), a.db, s.Username, "backup.delete", name)
 	}
-	a.done(w, r, safeNext(r.PostFormValue("back")), "백업 파일을 삭제했습니다.", err)
+	a.done(w, r, safeNext(r.PostFormValue("back")), i18n.M("backup.deleted"), err)
 }
 
 func (a *App) handleRestore(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -311,18 +321,18 @@ func (a *App) handleRestore(w http.ResponseWriter, r *http.Request, s *Session) 
 			return err
 		}
 		if _, err := os.Stat(filepath.Join(a.cfg.BackupDir, file)); err != nil {
-			return errors.New("백업 파일을 찾을 수 없습니다")
+			return i18n.E("backup.err.not_found")
 		}
 		if err := validate.RepoName(target); err != nil {
 			return err
 		}
 		if overwrite && r.PostFormValue("confirm") != target {
-			return errors.New("덮어쓰기 복원은 확인란에 대상 저장소 이름을 정확히 입력해야 합니다")
+			return i18n.E("backup.err.confirm_overwrite")
 		}
 		_, err := a.startJob(s.Username, "restore", target, a.jobRestore(file, target, overwrite, s.Username))
 		return err
 	}()
-	a.done(w, r, "/admin/system/backups", "복원 작업을 시작했습니다. 작업 목록에서 진행 상태를 확인하세요.", err)
+	a.done(w, r, "/admin/system/backups", i18n.M("backup.restore_started"), err)
 }
 
 // handleBackupUpload streams a dump file to the backup directory without
@@ -334,25 +344,25 @@ func (a *App) handleBackupUpload(w http.ResponseWriter, r *http.Request, s *Sess
 	err := func() error {
 		mr, err := r.MultipartReader()
 		if err != nil {
-			return errors.New("잘못된 업로드 요청입니다")
+			return i18n.E("upload.err.request")
 		}
 		p, err := mr.NextPart()
 		if err != nil || p.FormName() != "_csrf" {
-			return errors.New("보안 토큰(CSRF)이 없습니다")
+			return i18n.E("upload.err.csrf_missing")
 		}
 		tok, _ := io.ReadAll(io.LimitReader(p, 256))
 		if subtle.ConstantTimeCompare(tok, []byte(s.CSRF)) != 1 {
-			return errors.New("보안 토큰(CSRF)이 유효하지 않습니다")
+			return i18n.E("upload.err.csrf_invalid")
 		}
 		p, err = mr.NextPart()
 		if err != nil || p.FormName() != "file" {
-			return errors.New("업로드할 파일을 선택하세요")
+			return i18n.E("upload.err.no_file")
 		}
 		br := bufio.NewReaderSize(p, 64<<10)
 		head, _ := br.Peek(32)
 		isGzip := len(head) >= 2 && head[0] == 0x1f && head[1] == 0x8b
 		if !isGzip && !strings.HasPrefix(string(head), "SVN-fs-dump-format-version:") {
-			return errors.New("svnadmin dump 파일(.svndump 또는 .svndump.gz)만 업로드할 수 있습니다")
+			return i18n.E("backup.err.not_dump")
 		}
 		name := "upload-" + time.Now().Format("20060102-150405") + "-r0.svndump.gz"
 		tmp, err := os.CreateTemp(a.cfg.BackupDir, ".upload-*.partial")
@@ -380,7 +390,7 @@ func (a *App) handleBackupUpload(w http.ResponseWriter, r *http.Request, s *Sess
 			copyErr = cerr
 		}
 		if copyErr != nil {
-			return fmt.Errorf("업로드 실패: %w", copyErr)
+			return i18n.Wrap(copyErr, "upload.err.failed")
 		}
 		if err := os.Rename(tmp.Name(), filepath.Join(a.cfg.BackupDir, name)); err != nil {
 			return err
@@ -388,7 +398,7 @@ func (a *App) handleBackupUpload(w http.ResponseWriter, r *http.Request, s *Sess
 		os.Chmod(filepath.Join(a.cfg.BackupDir, name), 0o640)
 		return store.Audit(r.Context(), a.db, s.Username, "backup.upload", name)
 	}()
-	a.done(w, r, "/admin/system/backups", "덤프 파일을 업로드했습니다. 복원할 수 있습니다.", err)
+	a.done(w, r, "/admin/system/backups", i18n.M("backup.uploaded"), err)
 }
 
 func (a *App) handleJobsFragment(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -401,15 +411,13 @@ func (a *App) handleJobsFragment(w http.ResponseWriter, r *http.Request, s *Sess
 		limit = 10
 	}
 	jobs, _ := a.listJobs(r.Context(), repo, limit)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	a.tmpl.pages["backups"].ExecuteTemplate(w, "jobs", map[string]any{"Jobs": jobs, "Repo": repo})
+	a.fragment(w, r, "backups", "jobs", map[string]any{"Jobs": jobs, "Repo": repo})
 }
 
 func (a *App) handleLogs(w http.ResponseWriter, r *http.Request, s *Session) {
 	ctx := r.Context()
 	src := r.URL.Query().Get("src")
-	v := &View{Title: "로그", Nav: "system", Tab: "logs", D: map[string]any{"Src": src}}
+	v := &View{Title: i18n.M("system.tab.logs"), Nav: "system", Tab: "logs", D: map[string]any{"Src": src}}
 	switch src {
 	case "app":
 		v.D["Lines"] = a.appLogs.Lines(1000)
@@ -435,4 +443,60 @@ func (a *App) handleAPIStatus(w http.ResponseWriter, r *http.Request, s *Session
 		"apache":  map[string]any{"managed": a.apache != nil, "running": ap.Running, "pid": ap.PID, "restarts": ap.Restarts},
 		"uptime":  int64(time.Since(a.started).Seconds()),
 	})
+}
+
+// ---- languages ----
+
+func (a *App) handleLocaleUpload(w http.ResponseWriter, r *http.Request, s *Session) {
+	err := func() error {
+		f, hdr, err := r.FormFile("file")
+		if err != nil {
+			return i18n.E("upload.err.no_file")
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, i18n.MaxFileSize+1))
+		if err != nil {
+			return i18n.Wrap(err, "upload.err.failed")
+		}
+		code, err := a.i18n.Install(data, strings.TrimSuffix(strings.ToLower(filepath.Base(hdr.Filename)), ".json"))
+		if err != nil {
+			return err
+		}
+		return store.Audit(r.Context(), a.db, s.Username, "locale.upload", code)
+	}()
+	a.done(w, r, "/admin/system", i18n.M("locales.uploaded"), err)
+}
+
+func (a *App) handleLocaleReload(w http.ResponseWriter, r *http.Request, s *Session) {
+	errs := a.i18n.Reload()
+	for _, e := range errs {
+		slog.Warn("language file skipped", "dir", a.cfg.LocalesDir(), "err", e)
+	}
+	a.done(w, r, "/admin/system", i18n.M("locales.reloaded", len(a.i18n.Codes())), nil)
+}
+
+func (a *App) handleLocaleDelete(w http.ResponseWriter, r *http.Request, s *Session) {
+	code := i18n.NormalizeCode(r.PathValue("code"))
+	err := a.i18n.Remove(code)
+	if err == nil {
+		err = store.Audit(r.Context(), a.db, s.Username, "locale.delete", code)
+	}
+	a.done(w, r, "/admin/system", i18n.M("locales.deleted", code), err)
+}
+
+func (a *App) handleLocaleDownload(w http.ResponseWriter, r *http.Request, s *Session) {
+	code, ok := strings.CutSuffix(r.PathValue("file"), ".json")
+	if !ok || !i18n.ValidCode(code) {
+		a.notFound(w, r, s)
+		return
+	}
+	data, err := a.i18n.Export(code)
+	if err != nil {
+		a.notFound(w, r, s)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+code+".json\"")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(data)
 }

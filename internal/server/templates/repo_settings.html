@@ -2,64 +2,64 @@
 {{template "repo_header" .}}
 <div class="grid2">
   <section class="box">
-    <h2>기본 정보</h2>
+    <h2>{{t "common.basic_info"}}</h2>
     <form method="post" action="/admin/repos/{{.Repo.Name}}/update" class="form">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <label>설명<input name="description" value="{{.Repo.Description}}" maxlength="200"></label>
-      <button class="btn primary">저장</button>
+      <label>{{t "common.description"}}<input name="description" value="{{.Repo.Description}}" maxlength="200"></label>
+      <button class="btn primary">{{t "common.save"}}</button>
     </form>
   </section>
   <section class="box">
-    <h2>상태</h2>
-    <p>현재 상태: {{if .Repo.Enabled}}<span class="badge green">활성</span>{{else}}<span class="badge red">비활성</span>{{end}}</p>
-    <p class="muted small">비활성화하면 모든 사용자의 SVN 접근과 웹 조회(SVN 사용자)가 즉시 차단됩니다. 권한 규칙은 보존됩니다.</p>
+    <h2>{{t "common.status"}}</h2>
+    <p>{{t "repo.current_status"}}: {{if .Repo.Enabled}}<span class="badge green">{{t "common.enabled"}}</span>{{else}}<span class="badge red">{{t "common.disabled"}}</span>{{end}}</p>
+    <p class="muted small">{{t "repo.disable_hint"}}</p>
     <form method="post" action="/admin/repos/{{.Repo.Name}}/toggle" class="inline">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      {{if .Repo.Enabled}}<button class="btn danger">비활성화</button>{{else}}<button class="btn primary">활성화</button>{{end}}
+      {{if .Repo.Enabled}}<button class="btn danger">{{t "common.disable"}}</button>{{else}}<button class="btn primary">{{t "common.enable"}}</button>{{end}}
     </form>
   </section>
 </div>
 
 <section class="box">
-  <h2>유지 관리</h2>
+  <h2>{{t "repo.maintenance"}}</h2>
   <div class="btn-row">
-    <form method="post" action="/admin/repos/{{.Repo.Name}}/verify" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">저장소 검증 (svnadmin verify)</button></form>
-    <form method="post" action="/admin/repos/{{.Repo.Name}}/backup" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">지금 백업 (svnadmin dump)</button></form>
-    <form method="post" action="/admin/repos/{{.Repo.Name}}/size" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">크기 다시 계산</button></form>
+    <form method="post" action="/admin/repos/{{.Repo.Name}}/verify" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">{{t "repo.verify"}} (svnadmin verify)</button></form>
+    <form method="post" action="/admin/repos/{{.Repo.Name}}/backup" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">{{t "repo.backup_now"}} (svnadmin dump)</button></form>
+    <form method="post" action="/admin/repos/{{.Repo.Name}}/size" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">{{t "repo.recalc_size"}}</button></form>
   </div>
-  <p class="muted small">현재 크기: {{size .Repo.SizeBytes}}{{if .Repo.SizeAt}} ({{dt .Repo.SizeAt}} 기준){{end}}</p>
+  <p class="muted small">{{t "repo.current_size"}}: {{size .Repo.SizeBytes}}{{if .Repo.SizeAt}} ({{t "repo.size_at" (dt .Repo.SizeAt)}}){{end}}</p>
   {{template "jobs" (dict "Jobs" .D.Jobs "Repo" .Repo.Name)}}
 </section>
 
 <section class="box">
-  <h2>백업 파일</h2>
+  <h2>{{t "backups.files"}}</h2>
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>파일</th><th class="num">크기</th><th class="hide-sm">생성</th><th></th></tr></thead>
+    <thead><tr><th>{{t "backups.col.file"}}</th><th class="num">{{t "common.size"}}</th><th class="hide-sm">{{t "backups.col.created"}}</th><th></th></tr></thead>
     <tbody>{{range .D.Backups}}<tr>
       <td class="break"><a hx-boost="false" href="/admin/system/backups/{{.Name}}" download>{{.Name}}</a></td>
       <td class="num nowrap">{{size .Size}}</td><td class="hide-sm nowrap small">{{dt .ModTime}}</td>
-      <td class="right"><a class="btn sm" href="/admin/system/backups">복원…</a></td>
-    </tr>{{else}}<tr><td colspan="4" class="empty">백업이 없습니다.</td></tr>{{end}}</tbody>
+      <td class="right"><a class="btn sm" href="/admin/system/backups">{{t "repo.restore_link"}}</a></td>
+    </tr>{{else}}<tr><td colspan="4" class="empty">{{t "repo.no_backups"}}</td></tr>{{end}}</tbody>
   </table></div>
 </section>
 
 <section class="box">
-  <h2>이름 변경</h2>
-  <form method="post" action="/admin/repos/{{.Repo.Name}}/rename" class="form row-form" hx-confirm="저장소 이름을 변경하면 기존 체크아웃 URL 이 바뀝니다. 계속할까요?">
+  <h2>{{t "repo.rename"}}</h2>
+  <form method="post" action="/admin/repos/{{.Repo.Name}}/rename" class="form row-form" hx-confirm="{{t "repo.rename_confirm"}}">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
-    <label>새 이름<input name="new_name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" value="{{.Repo.Name}}"></label>
-    <button class="btn">이름 변경</button>
+    <label>{{t "repo.new_name"}}<input name="new_name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" value="{{.Repo.Name}}"></label>
+    <button class="btn">{{t "repo.rename"}}</button>
   </form>
-  <p class="muted small">기존 작업 복사본은 <code>svn relocate 새URL</code> 로 전환해야 합니다. 권한 규칙은 유지됩니다.</p>
+  <p class="muted small">{{th "repo.rename_hint" (code "svn relocate URL")}}</p>
 </section>
 
 <section class="box danger-zone">
-  <h2>저장소 삭제</h2>
-  <p>저장소와 모든 리비전이 영구 삭제됩니다. 필요하면 먼저 백업하세요. (백업 파일은 삭제되지 않습니다)</p>
-  <form method="post" action="/admin/repos/{{.Repo.Name}}/delete" class="form row-form" hx-confirm="저장소 '{{.Repo.Name}}' 를 영구 삭제합니다. 계속할까요?">
+  <h2>{{t "repo.delete"}}</h2>
+  <p>{{t "repo.delete_hint"}}</p>
+  <form method="post" action="/admin/repos/{{.Repo.Name}}/delete" class="form row-form" hx-confirm="{{t "repo.delete_confirm" .Repo.Name}}">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
-    <label>확인을 위해 <strong>{{.Repo.Name}}</strong> 입력<input name="confirm" required autocomplete="off"></label>
-    <button class="btn danger">저장소 삭제</button>
+    <label>{{th "repo.delete_type_name" (strong .Repo.Name)}}<input name="confirm" required autocomplete="off"></label>
+    <button class="btn danger">{{t "repo.delete"}}</button>
   </form>
 </section>
 {{end}}

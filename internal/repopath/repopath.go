@@ -2,19 +2,20 @@
 package repopath
 
 import (
-	"errors"
 	"strings"
 	"unicode/utf8"
+
+	"svngo/internal/i18n"
 )
 
 // Clean normalizes a path inside a repository to "/a/b" form.
 // It rejects control characters and "." / ".." segments.
 func Clean(p string) (string, error) {
 	if !utf8.ValidString(p) {
-		return "", errors.New("경로가 올바른 UTF-8 이 아닙니다")
+		return "", i18n.E("path.err.utf8")
 	}
 	if len(p) > 4096 {
-		return "", errors.New("경로가 너무 깁니다")
+		return "", i18n.E("path.err.too_long")
 	}
 	var segs []string
 	for _, s := range strings.Split(p, "/") {
@@ -22,11 +23,11 @@ func Clean(p string) (string, error) {
 			continue
 		}
 		if s == "." || s == ".." {
-			return "", errors.New("경로에 '.' 또는 '..' 를 사용할 수 없습니다")
+			return "", i18n.E("path.err.dots")
 		}
 		for _, r := range s {
 			if r < 0x20 || r == 0x7f {
-				return "", errors.New("경로에 제어 문자를 사용할 수 없습니다")
+				return "", i18n.E("path.err.control")
 			}
 		}
 		segs = append(segs, s)

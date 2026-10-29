@@ -39,18 +39,6 @@ func (r Rule) SubjectLabel() string {
 	return r.Subject
 }
 
-func (r Rule) AccessLabel() string { return AccessLabel(r.Access) }
-
-func AccessLabel(a string) string {
-	switch a {
-	case "rw":
-		return "읽기/쓰기"
-	case "r":
-		return "읽기"
-	}
-	return "접근 금지"
-}
-
 func (r Rule) authzValue() string {
 	switch r.Access {
 	case "rw":

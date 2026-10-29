@@ -46,7 +46,7 @@ func New(c *config.Config) (*Tools, error) {
 	}, nil
 }
 
-var errOutputTooLarge = errors.New("명령 출력이 너무 큽니다")
+var errOutputTooLarge = errors.New("command output too large")
 
 type limitWriter struct {
 	buf   bytes.Buffer
@@ -115,7 +115,7 @@ func (s *Tools) output(ctx context.Context, timeout time.Duration, maxOut int, b
 			return nil, errOutputTooLarge
 		}
 		if ctx.Err() == context.DeadlineExceeded {
-			err = fmt.Errorf("시간 초과: %w", ctx.Err())
+			err = fmt.Errorf("timed out: %w", ctx.Err())
 		}
 		return nil, &cmdError{Tool: filepath.Base(bin) + " " + args[0], Stderr: errb.buf.String(), Err: err}
 	}
@@ -213,7 +213,7 @@ func (s *Tools) Versions(ctx context.Context) map[string]string {
 // SvnGo refuses to start otherwise, because every auth file change relies on it.
 func (s *Tools) SelfTestAuthz(ctx context.Context, dir string) error {
 	if s.Authz == "" {
-		return errors.New("authz 검증 도구(svngo-authz 또는 svnauthz)를 찾을 수 없습니다. SVNGO_SVNAUTHZ 로 경로를 지정하세요")
+		return errors.New("authz validator (svngo-authz or svnauthz) not found; set its path with SVNGO_SVNAUTHZ")
 	}
 	write := func(content string) (string, error) {
 		f, err := os.CreateTemp(dir, ".authz-selftest-*")
@@ -239,17 +239,17 @@ func (s *Tools) SelfTestAuthz(ctx context.Context, dir string) error {
 	defer os.Remove(bad)
 
 	if err := s.ValidateAuthz(ctx, good); err != nil {
-		return fmt.Errorf("authz 검증 도구 자체 점검 실패 (정상 파일 거부): %w", err)
+		return fmt.Errorf("authz validator self-test failed (rejected a valid file): %w", err)
 	}
 	if err := s.ValidateAuthz(ctx, bad); err == nil {
-		return fmt.Errorf("authz 검증 도구 자체 점검 실패: 잘못된 authz 파일을 통과시켰습니다 (%s)", s.Authz)
+		return fmt.Errorf("authz validator self-test failed: accepted an invalid authz file (%s)", s.Authz)
 	}
 	for _, c := range []struct{ path, user, want string }{
 		{"/", "alice", "rw"}, {"/secret", "alice", "no"}, {"/", "bob", "no"},
 	} {
 		got, err := s.AccessOf(ctx, good, "selftest", c.path, c.user)
 		if err != nil || got != c.want {
-			return fmt.Errorf("authz 검증 도구 자체 점검 실패: %s %s 권한 예상=%s 결과=%q (%v)", c.user, c.path, c.want, got, err)
+			return fmt.Errorf("authz validator self-test failed: %s %s expected=%s got=%q (%v)", c.user, c.path, c.want, got, err)
 		}
 	}
 	return nil
@@ -350,7 +350,7 @@ func (s *Tools) Log(ctx context.Context, dir, path string, startRev int64, limit
 		Entries []LogEntry `xml:"logentry"`
 	}
 	if err := xml.Unmarshal(out, &doc); err != nil {
-		return nil, fmt.Errorf("svn log 출력 해석 실패: %w", err)
+		return nil, fmt.Errorf("parsing svn log output failed: %w", err)
 	}
 	return doc.Entries, nil
 }
@@ -383,7 +383,7 @@ func (s *Tools) List(ctx context.Context, dir, path string, rev int64) ([]Entry,
 		Entries []Entry `xml:"list>entry"`
 	}
 	if err := xml.Unmarshal(out, &doc); err != nil {
-		return nil, fmt.Errorf("svn list 출력 해석 실패: %w", err)
+		return nil, fmt.Errorf("parsing svn list output failed: %w", err)
 	}
 	for i := range doc.Entries {
 		doc.Entries[i].Path = repopath.Join(path, doc.Entries[i].Name)
@@ -410,7 +410,7 @@ func (s *Tools) NodeInfo(ctx context.Context, dir, path string, rev int64) (Node
 		Entry NodeInfo `xml:"entry"`
 	}
 	if err := xml.Unmarshal(out, &doc); err != nil {
-		return NodeInfo{}, fmt.Errorf("svn info 출력 해석 실패: %w", err)
+		return NodeInfo{}, fmt.Errorf("parsing svn info output failed: %w", err)
 	}
 	return doc.Entry, nil
 }

@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"svngo/internal/apache"
+	"svngo/internal/i18n"
 	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/svn"
@@ -84,7 +83,7 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request, s *Session) {
 	a.db.QueryRowContext(ctx, "SELECT COALESCE(SUM(CASE WHEN size_bytes>0 THEN size_bytes ELSE 0 END),0) FROM repos").Scan(&total)
 	audits, _ := a.listAudit(ctx, 8, 0)
 	jobs, _ := a.listJobs(ctx, "", 5)
-	v := &View{Title: "대시보드", Nav: "dashboard", D: map[string]any{
+	v := &View{Title: i18n.M("nav.dashboard"), Nav: "dashboard", D: map[string]any{
 		"Counts": counts, "TotalSize": total, "Disk": diskUsage(a.cfg.ReposDir), "Audits": audits, "Jobs": jobs,
 		"SvnBase": a.svnBaseURL(r), "Apache": a.apacheStatus(), "Uptime": time.Since(a.started).Round(time.Second).String(),
 	}}
@@ -99,7 +98,7 @@ func (a *App) handleRepos(w http.ResponseWriter, r *http.Request, s *Session) {
 		(SELECT COUNT(*) FROM rules WHERE repo_id=repos.id) FROM repos
 		WHERE name LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' ORDER BY name`, like, like)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	pol := a.policy.Load()
@@ -123,7 +122,7 @@ func (a *App) handleRepos(w http.ResponseWriter, r *http.Request, s *Session) {
 			a.refreshSizeAsync(rr.Name)
 		}
 	}
-	v := &View{Title: "저장소", Nav: "repos", D: map[string]any{
+	v := &View{Title: i18n.M("nav.repos"), Nav: "repos", D: map[string]any{
 		"Repos": page, "Pager": pg, "Q": q, "SvnBase": a.svnBaseURL(r),
 		"DefaultLayout": store.Setting(ctx, a.db, "default_layout") == "1",
 	}}
@@ -151,16 +150,16 @@ func (a *App) handleRepoCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 		}
 		final := a.repoDir(name)
 		if _, err := os.Stat(final); err == nil {
-			return fmt.Errorf("이미 같은 이름의 저장소 디렉터리가 있습니다: %s", name)
+			return i18n.E("repo.err.dir_exists_name", name)
 		}
 		tmp := filepath.Join(a.cfg.TmpDir(), "create-"+passwd.RandomString(10, "abcdefghijklmnopqrstuvwxyz0123456789"))
 		defer os.RemoveAll(tmp)
 		if err := a.svn.Create(ctx, tmp); err != nil {
-			return fmt.Errorf("svnadmin create 실패: %w", err)
+			return i18n.Wrap(err, "repo.err.create")
 		}
 		if layout {
 			if err := a.svn.MkLayout(ctx, tmp, s.Username); err != nil {
-				return fmt.Errorf("기본 디렉터리 생성 실패: %w", err)
+				return i18n.Wrap(err, "repo.err.layout")
 			}
 		}
 		renamed := false
@@ -168,7 +167,7 @@ func (a *App) handleRepoCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 			res, err := tx.ExecContext(ctx, "INSERT INTO repos(name, description, created_at) VALUES(?,?,?)", name, desc, store.Now())
 			if err != nil {
 				if strings.Contains(err.Error(), "UNIQUE") {
-					return errors.New("이미 등록된 저장소 이름입니다")
+					return i18n.E("repo.err.name_registered")
 				}
 				return err
 			}
@@ -179,7 +178,7 @@ func (a *App) handleRepoCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 				}
 			}
 			if _, err := os.Stat(final); err == nil {
-				return errors.New("이미 같은 이름의 저장소 디렉터리가 있습니다")
+				return i18n.E("repo.err.dir_exists")
 			}
 			if err := os.Rename(tmp, final); err != nil {
 				return err
@@ -194,16 +193,16 @@ func (a *App) handleRepoCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 			return err
 		}
 		if _, err := a.svn.Youngest(ctx, final); err != nil {
-			return fmt.Errorf("저장소는 생성되었으나 확인에 실패했습니다: %w", err)
+			return i18n.Wrap(err, "repo.err.created_unverified")
 		}
 		a.refreshSizeAsync(name)
 		return nil
 	}()
 	if err != nil {
-		a.done(w, r, "/admin/repos", "", err)
+		a.done(w, r, "/admin/repos", i18n.Msg{}, err)
 		return
 	}
-	a.done(w, r, "/admin/repos/"+name, "저장소 '"+name+"' 를 생성했습니다. Apache 재시작 없이 바로 사용할 수 있습니다.", nil)
+	a.done(w, r, "/admin/repos/"+name, i18n.M("repo.created", name), nil)
 }
 
 func (a *App) handleRepoOverview(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -213,10 +212,7 @@ func (a *App) handleRepoOverview(w http.ResponseWriter, r *http.Request, s *Sess
 	}
 	ctx := r.Context()
 	dir := a.repoDir(repo.Name)
-	uuid, err := a.svn.UUID(ctx, dir)
-	if err != nil {
-		uuid = "확인 실패: " + err.Error()
-	}
+	uuid, uuidErr := a.svn.UUID(ctx, dir)
 	if y, err := a.svn.Youngest(ctx, dir); err == nil {
 		repo.Youngest = y
 	}
@@ -225,8 +221,8 @@ func (a *App) handleRepoOverview(w http.ResponseWriter, r *http.Request, s *Sess
 	if s.IsAdmin() && time.Since(time.Unix(repo.SizeAt, 0)) > 10*time.Minute {
 		a.refreshSizeAsync(repo.Name)
 	}
-	v := &View{Title: repo.Name, Nav: "repos", Tab: "overview", Repo: repo, D: map[string]any{
-		"UUID": uuid, "Log": entries, "SvnURL": a.svnBaseURL(r) + "/" + repo.Name,
+	v := &View{Title: i18n.Raw(repo.Name), Nav: "repos", Tab: "overview", Repo: repo, D: map[string]any{
+		"UUID": uuid, "UUIDErr": uuidErr, "Log": entries, "SvnURL": a.svnBaseURL(r) + "/" + repo.Name,
 	}}
 	if s.IsAdmin() {
 		v.D["Jobs"], _ = a.listJobs(ctx, repo.Name, 5)
@@ -243,7 +239,7 @@ func (a *App) handleRepoSettings(w http.ResponseWriter, r *http.Request, s *Sess
 	}
 	backups, _ := a.listBackups(repo.Name)
 	jobs, _ := a.listJobs(r.Context(), repo.Name, 10)
-	a.render(w, r, s, http.StatusOK, "repo_settings", &View{Title: repo.Name + " 설정", Nav: "repos", Tab: "settings", Repo: repo,
+	a.render(w, r, s, http.StatusOK, "repo_settings", &View{Title: i18n.M("title.repo_settings", repo.Name), Nav: "repos", Tab: "settings", Repo: repo,
 		D: map[string]any{"Backups": backups, "Jobs": jobs}})
 }
 
@@ -257,7 +253,7 @@ func (a *App) handleRepoUpdate(w http.ResponseWriter, r *http.Request, s *Sessio
 		_, err := tx.ExecContext(r.Context(), "UPDATE repos SET description=? WHERE id=?", desc, repo.ID)
 		return err
 	})
-	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", "설명을 저장했습니다.", err)
+	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.M("repo.desc_saved"), err)
 }
 
 func (a *App) handleRepoToggle(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -265,9 +261,9 @@ func (a *App) handleRepoToggle(w http.ResponseWriter, r *http.Request, s *Sessio
 	if !ok {
 		return
 	}
-	action, msg := "repo.disable", "저장소를 비활성화했습니다. SVN 접근이 즉시 차단됩니다."
+	action, msg := "repo.disable", i18n.M("repo.disabled_msg")
 	if !repo.Enabled {
-		action, msg = "repo.enable", "저장소를 활성화했습니다."
+		action, msg = "repo.enable", i18n.M("repo.enabled_msg")
 	}
 	err := a.mutate(r.Context(), s.Username, action, repo.Name, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(r.Context(), "UPDATE repos SET enabled=1-enabled WHERE id=?", repo.ID)
@@ -291,22 +287,22 @@ func (a *App) handleRepoRename(w http.ResponseWriter, r *http.Request, s *Sessio
 			return err
 		}
 		if newName == repo.Name {
-			return errors.New("새 이름이 기존 이름과 같습니다")
+			return i18n.E("repo.err.same_name")
 		}
 		oldDir, newDir := a.repoDir(repo.Name), a.repoDir(newName)
 		renamed := false
 		err := a.mutate(ctx, s.Username, "repo.rename", repo.Name+" -> "+newName, func(tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, "UPDATE repos SET name=? WHERE id=?", newName, repo.ID); err != nil {
 				if strings.Contains(err.Error(), "UNIQUE") {
-					return errors.New("이미 사용 중인 저장소 이름입니다")
+					return i18n.E("repo.err.name_in_use")
 				}
 				return err
 			}
 			if _, err := os.Lstat(newDir); err == nil {
-				return errors.New("같은 이름의 디렉터리가 이미 있습니다")
+				return i18n.E("repo.err.dir_exists")
 			}
 			if err := os.Rename(oldDir, newDir); err != nil {
-				return fmt.Errorf("디렉터리 이름 변경 실패: %w", err)
+				return i18n.Wrap(err, "repo.err.rename_dir")
 			}
 			renamed = true
 			return nil
@@ -317,10 +313,10 @@ func (a *App) handleRepoRename(w http.ResponseWriter, r *http.Request, s *Sessio
 		return err
 	}()
 	if err != nil {
-		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", "", err)
+		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.Msg{}, err)
 		return
 	}
-	a.done(w, r, "/admin/repos/"+newName+"/settings", "저장소 이름을 '"+newName+"' 로 변경했습니다. 작업 복사본은 svn relocate 가 필요합니다.", nil)
+	a.done(w, r, "/admin/repos/"+newName+"/settings", i18n.M("repo.renamed", newName), nil)
 }
 
 func (a *App) handleRepoDelete(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -330,7 +326,7 @@ func (a *App) handleRepoDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 	}
 	ctx := r.Context()
 	if r.PostFormValue("confirm") != repo.Name {
-		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", "", errors.New("확인을 위해 저장소 이름을 정확히 입력해야 합니다"))
+		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.Msg{}, i18n.E("repo.err.confirm_name"))
 		return
 	}
 	dir := a.repoDir(repo.Name)
@@ -342,7 +338,7 @@ func (a *App) handleRepoDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 		}
 		if _, err := os.Lstat(dir); err == nil {
 			if err := os.Rename(dir, trash); err != nil {
-				return fmt.Errorf("저장소 디렉터리 이동 실패: %w", err)
+				return i18n.Wrap(err, "repo.err.move_dir")
 			}
 			moved = true
 		}
@@ -352,7 +348,7 @@ func (a *App) handleRepoDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 		if moved {
 			os.Rename(trash, dir)
 		}
-		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", "", err)
+		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.Msg{}, err)
 		return
 	}
 	if moved {
@@ -360,11 +356,11 @@ func (a *App) handleRepoDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 		go func() {
 			defer a.jobsWG.Done()
 			if err := os.RemoveAll(trash); err != nil {
-				slog.Error("삭제된 저장소 정리 실패", "dir", trash, "err", err)
+				slog.Error("cleaning up the deleted repository failed", "dir", trash, "err", err)
 			}
 		}()
 	}
-	a.done(w, r, "/admin/repos", "저장소 '"+repo.Name+"' 를 삭제했습니다.", nil)
+	a.done(w, r, "/admin/repos", i18n.M("repo.deleted", repo.Name), nil)
 }
 
 func (a *App) handleRepoVerify(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -373,7 +369,7 @@ func (a *App) handleRepoVerify(w http.ResponseWriter, r *http.Request, s *Sessio
 		return
 	}
 	_, err := a.startJob(s.Username, "verify", repo.Name, a.jobVerify(repo.Name))
-	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", "저장소 검증 작업을 시작했습니다.", err)
+	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.M("repo.verify_started"), err)
 }
 
 func (a *App) handleRepoBackup(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -382,7 +378,7 @@ func (a *App) handleRepoBackup(w http.ResponseWriter, r *http.Request, s *Sessio
 		return
 	}
 	_, err := a.startJob(s.Username, "backup", repo.Name, a.jobBackup(repo.Name))
-	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", "백업 작업을 시작했습니다.", err)
+	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.M("repo.backup_started"), err)
 }
 
 func (a *App) handleRepoSize(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -391,7 +387,7 @@ func (a *App) handleRepoSize(w http.ResponseWriter, r *http.Request, s *Session)
 		return
 	}
 	n, err := a.refreshSize(r.Context(), repo.Name)
-	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", "저장소 크기: "+humanSize(n), err)
+	a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.M("repo.size_msg", humanSize(n)), err)
 }
 
 // ---- size cache ----

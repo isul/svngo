@@ -1,27 +1,27 @@
 {{define "content"}}
 <div class="page-head">
-  <h1>그룹</h1>
+  <h1>{{t "nav.groups"}}</h1>
   <details class="create"{{if and (not .D.Groups) (not .D.Q)}} open{{end}}>
-    <summary class="btn primary">+ 새 그룹</summary>
+    <summary class="btn primary">+ {{t "groups.new"}}</summary>
     <form method="post" action="/admin/groups" class="form panel">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <label>그룹 이름 <span class="muted small">(영문, 숫자, . _ -)</span><input name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}"></label>
-      <label>설명<input name="description" maxlength="200"></label>
-      <button class="btn primary">그룹 생성</button>
+      <label>{{t "groups.name"}} <span class="muted small">({{t "repos.name_hint"}})</span><input name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}"></label>
+      <label>{{t "common.description"}}<input name="description" maxlength="200"></label>
+      <button class="btn primary">{{t "groups.create"}}</button>
     </form>
   </details>
 </div>
 <form class="search" method="get" action="/admin/groups">
-  <input type="search" name="q" value="{{.D.Q}}" placeholder="그룹 검색" aria-label="그룹 검색"
+  <input type="search" name="q" value="{{.D.Q}}" placeholder="{{t "groups.search"}}" aria-label="{{t "groups.search"}}"
     hx-get="/admin/groups" hx-trigger="input changed delay:300ms, search" hx-target="#group-list" hx-select="#group-list" hx-swap="outerHTML" hx-push-url="true">
 </form>
 <div id="group-list">
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>그룹</th><th class="hide-sm">설명</th><th class="num">구성원</th><th class="num">권한 규칙</th></tr></thead>
+    <thead><tr><th>{{t "groups.col.group"}}</th><th class="hide-sm">{{t "common.description"}}</th><th class="num">{{t "groups.members"}}</th><th class="num">{{t "common.rules"}}</th></tr></thead>
     <tbody>{{range .D.Groups}}<tr>
       <td><a href="/admin/groups/{{.Name}}"><strong>@{{.Name}}</strong></a></td>
       <td class="hide-sm">{{.Description}}</td><td class="num">{{.Members}}</td><td class="num">{{.Rules}}</td>
-    </tr>{{else}}<tr><td colspan="4" class="empty">그룹이 없습니다.</td></tr>{{end}}</tbody>
+    </tr>{{else}}<tr><td colspan="4" class="empty">{{t "groups.none"}}</td></tr>{{end}}</tbody>
   </table></div>
   {{template "pager" .D.Pager}}
 </div>

@@ -2,6 +2,7 @@
 .env
 *.md
 !README.md
+!README.ko.md
 e2e
 docs
 data

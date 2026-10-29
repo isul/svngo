@@ -103,7 +103,13 @@ CREATE TABLE settings (
 );
 `
 
-var migrations = []string{schemaV1}
+// schemaV2 adds the per-account UI language (” = follow the browser).
+const schemaV2 = `
+ALTER TABLE admins ADD COLUMN lang TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT '';
+`
+
+var migrations = []string{schemaV1, schemaV2}
 
 func Open(path string) (*sql.DB, error) {
 	dsn := "file:" + path + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)" +
@@ -119,7 +125,7 @@ func Open(path string) (*sql.DB, error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("DB 연결 실패: %w", err)
+		return nil, fmt.Errorf("DB connection failed: %w", err)
 	}
 	if err := migrate(ctx, db); err != nil {
 		db.Close()
@@ -140,7 +146,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		}
 		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("DB 마이그레이션 %d 실패: %w", i+1, err)
+			return fmt.Errorf("DB migration %d failed: %w", i+1, err)
 		}
 		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = "+strconv.Itoa(i+1)); err != nil {
 			tx.Rollback()
@@ -175,6 +181,11 @@ var SettingDefaults = map[string]string{
 
 	"svn_block_attempts": "20", // failed SVN (HTTP Basic) logins per IP before blocking; 0 = off
 	"svn_block_minutes":  "15", // counting window and block duration
+
+	"default_lang": "en", // UI language when the browser's languages are not available
+
+	"admin_allow_ips": "", // client IPs/CIDRs allowed to use /admin (one per line); empty = all
+	"svn_allow_ips":   "", // client IPs/CIDRs allowed to use /svn (one per line); empty = all
 }
 
 func Setting(ctx context.Context, q DBTX, key string) string {

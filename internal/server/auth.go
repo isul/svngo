@@ -8,8 +8,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"svngo/internal/i18n"
 	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/validate"
@@ -32,6 +31,7 @@ type Session struct {
 	Username    string
 	CSRF        string
 	ExpiresAt   int64
+	Lang        string // chosen UI language, "" = follow the browser
 }
 
 func (s *Session) IsAdmin() bool { return s != nil && s.Kind == "admin" }
@@ -64,11 +64,10 @@ func (a *App) loadSession(r *http.Request) *Session {
 		return nil
 	}
 	// the principal must still exist (and be enabled for SVN users)
-	var ok int
 	if s.Kind == "admin" {
-		err = a.db.QueryRowContext(r.Context(), "SELECT 1 FROM admins WHERE id=? AND username=?", s.PrincipalID, s.Username).Scan(&ok)
+		err = a.db.QueryRowContext(r.Context(), "SELECT lang FROM admins WHERE id=? AND username=?", s.PrincipalID, s.Username).Scan(&s.Lang)
 	} else {
-		err = a.db.QueryRowContext(r.Context(), "SELECT 1 FROM users WHERE id=? AND username=? AND enabled=1", s.PrincipalID, s.Username).Scan(&ok)
+		err = a.db.QueryRowContext(r.Context(), "SELECT lang FROM users WHERE id=? AND username=? AND enabled=1", s.PrincipalID, s.Username).Scan(&s.Lang)
 	}
 	if err != nil {
 		return nil
@@ -93,6 +92,7 @@ func (a *App) requireAdminNoCSRF(h handler) http.HandlerFunc {
 func (a *App) auth(h handler, admin, csrf bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s := a.loadSession(r)
+		r = a.withLang(r, s)
 		if s == nil {
 			if r.Method == http.MethodGet && r.Header.Get("HX-Request") != "true" {
 				http.Redirect(w, r, "/admin/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
@@ -101,20 +101,20 @@ func (a *App) auth(h handler, admin, csrf bool) http.HandlerFunc {
 			if r.Header.Get("HX-Request") == "true" {
 				w.Header().Set("HX-Redirect", "/admin/login")
 			}
-			http.Error(w, "로그인이 필요합니다", http.StatusUnauthorized)
+			http.Error(w, a.loc(r).T("err.login_required"), http.StatusUnauthorized)
 			return
 		}
 		if admin && !s.IsAdmin() {
-			a.errorPage(w, r, s, http.StatusForbidden, "관리자 권한이 필요합니다.")
+			a.errorPage(w, r, s, http.StatusForbidden, i18n.M("err.admin_required"))
 			return
 		}
 		if r.Method == http.MethodPost {
 			if !a.sameOrigin(r) {
-				a.errorPage(w, r, s, http.StatusForbidden, "잘못된 요청 출처입니다 (Origin 불일치).")
+				a.errorPage(w, r, s, http.StatusForbidden, i18n.M("err.origin_mismatch"))
 				return
 			}
 			if csrf && !validCSRF(r, s) {
-				a.errorPage(w, r, s, http.StatusForbidden, "보안 토큰(CSRF)이 유효하지 않습니다. 페이지를 새로고침한 뒤 다시 시도하세요.")
+				a.errorPage(w, r, s, http.StatusForbidden, i18n.M("err.csrf_invalid"))
 				return
 			}
 		}
@@ -281,7 +281,7 @@ func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	a.render(w, r, nil, http.StatusOK, "login", &View{Title: "로그인",
+	a.render(w, r, nil, http.StatusOK, "login", &View{Title: i18n.M("title.login"),
 		D: map[string]any{"Next": safeNext(r.URL.Query().Get("next")), "CSRF": a.loginCSRFToken(w, r)}})
 }
 
@@ -294,36 +294,36 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PostFormValue("username"))
 	pw := r.PostFormValue("password")
 	next := safeNext(r.PostFormValue("next"))
-	fail := func(status int, msg string) {
+	fail := func(status int, msg i18n.Msg) {
 		w.Header().Set("Cache-Control", "no-store")
-		a.render(w, r, nil, status, "login", &View{Title: "로그인",
+		a.render(w, r, nil, status, "login", &View{Title: i18n.M("title.login"),
 			D: map[string]any{"Next": next, "Error": msg, "Username": validate.Clip(user, 64), "CSRF": a.loginCSRFToken(w, r)}})
 	}
 	if !a.sameOrigin(r) {
-		fail(http.StatusForbidden, "잘못된 요청 출처입니다.")
+		fail(http.StatusForbidden, i18n.M("err.bad_origin"))
 		return
 	}
 	if !a.validLoginCSRF(r) {
-		fail(http.StatusForbidden, "보안 토큰(CSRF)이 없거나 만료되었습니다. 다시 로그인하세요.")
+		fail(http.StatusForbidden, i18n.M("login.err.csrf"))
 		return
 	}
 	ip := clientIP(r)
 	keys := []string{"ip:" + ip, "user:" + strings.ToLower(validate.Clip(user, 64))}
 	if wait := a.limiter.blocked(keys...); wait > 0 {
-		fail(http.StatusTooManyRequests, fmt.Sprintf("로그인 시도가 너무 많습니다. %d분 후 다시 시도하세요.", int(wait.Minutes())+1))
+		fail(http.StatusTooManyRequests, i18n.M("login.err.too_many", int(wait.Minutes())+1))
 		return
 	}
 	if validate.Username(user) != nil || pw == "" || len(pw) > 72 {
 		a.limiter.fail(store.SettingInt(ctx, a.db, "login_attempts", 3, 100), keys...)
-		fail(http.StatusUnauthorized, "아이디 또는 비밀번호가 올바르지 않습니다.")
+		fail(http.StatusUnauthorized, i18n.M("login.err.invalid"))
 		return
 	}
 
 	kind, id, ok := a.checkCredentials(ctx, user, pw)
 	if !ok {
 		a.limiter.fail(store.SettingInt(ctx, a.db, "login_attempts", 3, 100), keys...)
-		slog.Warn("로그인 실패", "user", user, "ip", ip)
-		fail(http.StatusUnauthorized, "아이디 또는 비밀번호가 올바르지 않습니다.")
+		slog.Warn("login failed", "user", user, "ip", ip)
+		fail(http.StatusUnauthorized, i18n.M("login.err.invalid"))
 		return
 	}
 	a.limiter.reset(keys...)
@@ -336,7 +336,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	a.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at<?", store.Now())
 	if _, err := a.db.ExecContext(ctx, `INSERT INTO sessions(token_hash, kind, principal_id, username, csrf, created_at, expires_at)
 		VALUES(?,?,?,?,?,?,?)`, tokenHash(token), kind, id, user, randomToken(), store.Now(), exp.Unix()); err != nil {
-		fail(http.StatusInternalServerError, "세션 생성 실패")
+		fail(http.StatusInternalServerError, i18n.M("login.err.session"))
 		return
 	}
 	if kind == "admin" {
@@ -346,7 +346,27 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	a.clearLoginCSRF(w, r)
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/admin", Expires: exp,
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.isSecure(r)})
+	var lang string
+	if kind == "admin" {
+		a.db.QueryRowContext(ctx, "SELECT lang FROM admins WHERE id=?", id).Scan(&lang)
+	} else {
+		a.db.QueryRowContext(ctx, "SELECT lang FROM users WHERE id=?", id).Scan(&lang)
+	}
+	if lang != "" && a.i18n.Has(lang) {
+		a.setLangCookie(w, r, lang)
+	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+// setLangCookie remembers the chosen language for signed-out pages such as
+// the login form; "" removes it.
+func (a *App) setLangCookie(w http.ResponseWriter, r *http.Request, lang string) {
+	ck := &http.Cookie{Name: langCookie, Value: lang, Path: "/admin", MaxAge: 365 * 24 * 3600,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.isSecure(r)}
+	if lang == "" {
+		ck.MaxAge = -1
+	}
+	http.SetCookie(w, ck)
 }
 
 // checkCredentials tries web admins first, then SVN users. Legacy APR1 hashes
@@ -374,7 +394,7 @@ func (a *App) checkCredentials(ctx context.Context, user, pw string) (string, in
 				return err
 			})
 			if err != nil {
-				slog.Error("레거시 해시 갱신 실패", "user", user, "err", err)
+				slog.Error("legacy hash upgrade failed", "user", user, "err", err)
 			}
 		}
 	}
@@ -395,7 +415,33 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request, s *Session) {
 }
 
 func (a *App) handleAccount(w http.ResponseWriter, r *http.Request, s *Session) {
-	a.render(w, r, s, http.StatusOK, "account", &View{Title: "내 계정", Nav: "account"})
+	userLang := s.Lang
+	if !a.i18n.Has(userLang) {
+		userLang = ""
+	}
+	a.render(w, r, s, http.StatusOK, "account", &View{Title: i18n.M("nav.account"), Nav: "account",
+		D: map[string]any{"Langs": a.i18n.List(), "UserLang": userLang}})
+}
+
+// handleAccountLang stores the account's UI language ("" = follow the browser)
+// and mirrors it in a cookie so the login page uses it too.
+func (a *App) handleAccountLang(w http.ResponseWriter, r *http.Request, s *Session) {
+	lang := i18n.NormalizeCode(r.PostFormValue("lang"))
+	if lang != "" && !a.i18n.Has(lang) {
+		a.done(w, r, "/admin/account", i18n.Msg{}, i18n.E("locale.err.unknown", lang))
+		return
+	}
+	table := "users"
+	if s.IsAdmin() {
+		table = "admins"
+	}
+	if _, err := a.db.ExecContext(r.Context(), "UPDATE "+table+" SET lang=? WHERE id=?", lang, s.PrincipalID); err != nil {
+		a.done(w, r, "/admin/account", i18n.Msg{}, err)
+		return
+	}
+	a.setLangCookie(w, r, lang)
+	s.Lang = lang
+	a.done(w, a.withLang(r, s), "/admin/account", i18n.M("account.language_saved"), nil)
 }
 
 func (a *App) handleAccountPassword(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -403,7 +449,7 @@ func (a *App) handleAccountPassword(w http.ResponseWriter, r *http.Request, s *S
 	cur, pw, pw2 := r.PostFormValue("current"), r.PostFormValue("password"), r.PostFormValue("password2")
 	err := func() error {
 		if pw != pw2 {
-			return errors.New("새 비밀번호 확인이 일치하지 않습니다")
+			return i18n.E("err.new_password_mismatch")
 		}
 		if err := validate.Password(pw); err != nil {
 			return err
@@ -417,7 +463,7 @@ func (a *App) handleAccountPassword(w http.ResponseWriter, r *http.Request, s *S
 			return err
 		}
 		if !passwd.Verify(hash, cur) {
-			return errors.New("현재 비밀번호가 올바르지 않습니다")
+			return i18n.E("err.current_password")
 		}
 		if s.IsAdmin() {
 			nh, err := passwd.Hash(pw, 12)
@@ -434,7 +480,7 @@ func (a *App) handleAccountPassword(w http.ResponseWriter, r *http.Request, s *S
 		_, err := a.db.ExecContext(ctx, "DELETE FROM sessions WHERE kind=? AND principal_id=? AND token_hash<>?", s.Kind, s.PrincipalID, s.TokenHash)
 		return err
 	}()
-	a.done(w, r, "/admin/account", "비밀번호가 변경되었습니다. SVN 클라이언트에도 즉시 적용됩니다.", err)
+	a.done(w, r, "/admin/account", i18n.M("account.password_changed"), err)
 }
 
 // setUserPassword updates the SVN user's hash and htpasswd atomically.
@@ -462,20 +508,20 @@ func (a *App) setUserPassword(ctx context.Context, actor string, id int64, pw st
 func (a *App) verifyHtpasswdEntry(user, pw string, wantPresent bool) error {
 	entries, _, err := readHtpasswdFile(a.cfg.HtpasswdFile())
 	if err != nil {
-		return fmt.Errorf("htpasswd 확인 실패: %w", err)
+		return i18n.Wrap(err, "err.htpasswd_check")
 	}
 	hash, ok := entries[user]
 	if !wantPresent {
 		if ok {
-			return fmt.Errorf("htpasswd 에 %s 항목이 남아 있습니다", user)
+			return i18n.E("err.htpasswd_left", user)
 		}
 		return nil
 	}
 	if !ok {
-		return fmt.Errorf("htpasswd 에 %s 항목이 없습니다", user)
+		return i18n.E("err.htpasswd_missing", user)
 	}
 	if pw != "" && !passwd.Verify(hash, pw) {
-		return fmt.Errorf("htpasswd 의 %s 비밀번호 검증 실패", user)
+		return i18n.E("err.htpasswd_verify", user)
 	}
 	return nil
 }

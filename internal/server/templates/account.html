@@ -1,18 +1,29 @@
 {{define "content"}}
-<h1>내 계정</h1>
+<h1>{{t "nav.account"}}</h1>
 <section class="box narrow">
   <dl class="kv">
-    <dt>아이디</dt><dd>{{.S.Username}}</dd>
-    <dt>계정 종류</dt><dd>{{if .S.IsAdmin}}웹 관리자{{else}}SVN 사용자{{end}}</dd>
+    <dt>{{t "common.username"}}</dt><dd>{{.S.Username}}</dd>
+    <dt>{{t "account.kind"}}</dt><dd>{{if .S.IsAdmin}}{{t "account.kind_admin"}}{{else}}{{t "account.kind_user"}}{{end}}</dd>
   </dl>
-  <h2>비밀번호 변경</h2>
+  <h2>{{t "account.language"}}</h2>
+  <form method="post" action="/admin/account/lang" class="form">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <label>{{t "account.language"}}
+      <select name="lang">
+        <option value=""{{if not .D.UserLang}} selected{{end}}>{{t "account.language_auto"}}</option>
+        {{range .D.Langs}}<option value="{{.Code}}"{{if eq .Code $.D.UserLang}} selected{{end}}>{{.Name}} ({{.Code}})</option>{{end}}
+      </select></label>
+    <button class="btn primary">{{t "common.save"}}</button>
+  </form>
+  <p class="muted small">{{t "account.language_hint"}}</p>
+  <h2>{{t "common.change_password"}}</h2>
   <form method="post" action="/admin/account/password" class="form">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
-    <label>현재 비밀번호<input name="current" type="password" required maxlength="72" autocomplete="current-password"></label>
-    <label>새 비밀번호 <span class="muted small">(8자 이상)</span><input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
-    <label>새 비밀번호 확인<input name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
-    <button class="btn primary">변경</button>
+    <label>{{t "account.current_password"}}<input name="current" type="password" required maxlength="72" autocomplete="current-password"></label>
+    <label>{{t "common.new_password"}} <span class="muted small">({{t "common.password_hint"}})</span><input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+    <label>{{t "common.new_password_confirm"}}<input name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+    <button class="btn primary">{{t "common.change"}}</button>
   </form>
-  {{if not .S.IsAdmin}}<p class="muted small">SVN 사용자 비밀번호를 변경하면 SVN 클라이언트(TortoiseSVN 등)에도 즉시 적용됩니다. 클라이언트에 저장된 인증 정보를 지우고 새 비밀번호로 다시 로그인하세요.</p>{{end}}
+  {{if not .S.IsAdmin}}<p class="muted small">{{t "account.svn_password_hint"}}</p>{{end}}
 </section>
 {{end}}

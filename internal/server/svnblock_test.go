@@ -22,7 +22,7 @@ func TestAuthzSelfTestRequired(t *testing.T) {
 			a.db.Close()
 			t.Fatalf("New started with authz validator %q", bin)
 		}
-		if !strings.Contains(err.Error(), "authz 검증 도구") {
+		if !strings.Contains(err.Error(), "authz validator") {
 			t.Fatalf("unexpected error for %q: %v", bin, err)
 		}
 	}

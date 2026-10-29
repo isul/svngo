@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -9,15 +10,17 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"svngo/internal/authz"
+	"svngo/internal/i18n"
 	"svngo/internal/passwd"
 	"svngo/internal/repopath"
 	"svngo/internal/store"
@@ -30,41 +33,29 @@ var templateFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
+// templates keeps the parsed pages as never-executed prototypes and clones
+// them per language with that language's translation functions bound, so
+// {{t "key"}} works everywhere, including partials invoked with other data.
 type templates struct {
-	pages map[string]*template.Template
-}
+	proto map[string]*template.Template
+	reg   *i18n.Registry
 
-var auditLabels = map[string]string{
-	"login.admin": "관리자 로그인", "login.user": "사용자 로그인",
-	"admin.create": "관리자 추가", "admin.delete": "관리자 삭제", "admin.passwd": "관리자 비밀번호 변경",
-	"repo.create": "저장소 생성", "repo.update": "저장소 수정", "repo.rename": "저장소 이름 변경",
-	"repo.delete": "저장소 삭제", "repo.enable": "저장소 활성화", "repo.disable": "저장소 비활성화",
-	"repo.restore": "저장소 복원", "repo.scan": "저장소 스캔",
-	"user.create": "사용자 생성", "user.update": "사용자 수정", "user.delete": "사용자 삭제",
-	"user.enable": "사용자 활성화", "user.disable": "사용자 비활성화", "user.passwd": "비밀번호 변경",
-	"user.rehash": "해시 업그레이드", "user.import": "사용자 가져오기", "user.groups": "사용자 그룹 변경",
-	"group.create": "그룹 생성", "group.update": "그룹 수정", "group.delete": "그룹 삭제",
-	"group.members.add": "그룹 멤버 추가", "group.members.remove": "그룹 멤버 제거",
-	"rule.set": "권한 설정", "rule.update": "권한 수정", "rule.delete": "권한 삭제",
-	"settings.update": "설정 변경", "sync.repair": "인증 파일 재생성",
-	"backup.delete": "백업 삭제", "backup.upload": "백업 업로드",
-	"job.backup": "백업 시작", "job.verify": "검증 시작", "job.restore": "복원 시작",
-	"svn.block": "SVN 접속 차단", "svn.unblock": "SVN 차단 해제",
+	mu    sync.RWMutex
+	cache map[string]*template.Template // lang + "/" + page
 }
 
 var tmplFuncs = template.FuncMap{
-	"size":        humanSize,
-	"dt":          fmtTime,
-	"unix":        func(n int64) time.Time { return time.Unix(n, 0) },
-	"rpath":       escapeRepoPath,
-	"add":         func(a, b int) int { return a + b },
-	"sub":         func(a, b int) int { return a - b },
-	"add64":       func(a, b int64) int64 { return a + b },
-	"sub64":       func(a, b int64) int64 { return a - b },
-	"parent":      repopath.Parent,
-	"activeJobs":  hasActiveJobs,
-	"accessLabel": authz.AccessLabel,
-	"crumbs":      breadcrumbs,
+	"size":       humanSize,
+	"dt":         fmtTime,
+	"unix":       func(n int64) time.Time { return time.Unix(n, 0) },
+	"rpath":      escapeRepoPath,
+	"add":        func(a, b int) int { return a + b },
+	"sub":        func(a, b int) int { return a - b },
+	"add64":      func(a, b int64) int64 { return a + b },
+	"sub64":      func(a, b int64) int64 { return a - b },
+	"parent":     repopath.Parent,
+	"activeJobs": hasActiveJobs,
+	"crumbs":     breadcrumbs,
 	"firstLine": func(s string) string {
 		l, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 		return validate.Clip(l, 120)
@@ -78,33 +69,61 @@ var tmplFuncs = template.FuncMap{
 		}
 		return m
 	},
-	"auditLabel": func(a string) string {
-		if l, ok := auditLabels[a]; ok {
-			return l
-		}
-		return a
+	"code": func(s string) template.HTML {
+		return template.HTML("<code>" + template.HTMLEscapeString(s) + "</code>")
 	},
-	"actionLabel": func(a string) string {
-		switch a {
-		case "A":
-			return "추가"
-		case "D":
-			return "삭제"
-		case "R":
-			return "교체"
-		}
-		return "수정"
+	"strong": func(s string) template.HTML {
+		return template.HTML("<strong>" + template.HTMLEscapeString(s) + "</strong>")
 	},
-	"hashLabel": func(h string) string {
-		if passwd.HashType(h) == "apr1" {
-			return "APR1-MD5 (레거시)"
-		}
-		return passwd.HashType(h)
+	"link": func(href, text string) template.HTML {
+		return template.HTML(`<a href="` + template.HTMLEscapeString(href) + `">` + template.HTMLEscapeString(text) + "</a>")
 	},
 }
 
-func loadTemplates() (*templates, error) {
-	base, err := template.New("").Funcs(tmplFuncs).ParseFS(templateFS, "templates/_*.html")
+// langFuncs returns the translation functions bound to one language.
+func langFuncs(l *i18n.Localizer) template.FuncMap {
+	return template.FuncMap{
+		"lang": func() string { return l.Lang },
+		"t":    l.T,
+		"th":   l.HTML,
+		"msg":  l.Any,
+		"auditLabel": func(a string) string {
+			return l.TOr("audit."+a, a)
+		},
+		"jobKind": func(k string) string {
+			return l.TOr("job.kind."+k, k)
+		},
+		"jobMsg": func(s string) string {
+			return l.Msg(i18n.Decode(s))
+		},
+		"accessLabel": func(a string) string {
+			switch a {
+			case "rw", "r":
+				return l.T("access." + a)
+			}
+			return l.T("access.none")
+		},
+		"actionLabel": func(a string) string {
+			switch a {
+			case "A", "D", "R":
+				return l.T("change." + a)
+			}
+			return l.T("change.M")
+		},
+		"hashLabel": func(h string) string {
+			if t := passwd.HashType(h); t != "apr1" {
+				return t
+			}
+			return l.T("hash.apr1")
+		},
+	}
+}
+
+func loadTemplates(reg *i18n.Registry) (*templates, error) {
+	funcs := template.FuncMap{}
+	maps.Copy(funcs, tmplFuncs)
+	maps.Copy(funcs, langFuncs(reg.For(i18n.Base)))
+	base, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/_*.html")
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +131,7 @@ func loadTemplates() (*templates, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &templates{pages: map[string]*template.Template{}}
+	t := &templates{proto: map[string]*template.Template{}, reg: reg, cache: map[string]*template.Template{}}
 	for _, f := range files {
 		name := path.Base(f)
 		if strings.HasPrefix(name, "_") {
@@ -123,11 +142,56 @@ func loadTemplates() (*templates, error) {
 			return nil, err
 		}
 		if _, err := c.ParseFS(templateFS, f); err != nil {
-			return nil, fmt.Errorf("템플릿 %s: %w", name, err)
+			return nil, fmt.Errorf("template %s: %w", name, err)
 		}
-		t.pages[strings.TrimSuffix(name, ".html")] = c
+		t.proto[strings.TrimSuffix(name, ".html")] = c
 	}
 	return t, nil
+}
+
+// get returns the page bound to lang, cloning the prototype on first use.
+// Translations are looked up at execution time, so reloading language files
+// needs no rebuild.
+func (t *templates) get(lang, page string) (*template.Template, error) {
+	key := lang + "/" + page
+	t.mu.RLock()
+	c := t.cache[key]
+	t.mu.RUnlock()
+	if c != nil {
+		return c, nil
+	}
+	p, ok := t.proto[page]
+	if !ok {
+		return nil, fmt.Errorf("template %s not found", page)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if c := t.cache[key]; c != nil {
+		return c, nil
+	}
+	c, err := p.Clone()
+	if err != nil {
+		return nil, err
+	}
+	c.Funcs(langFuncs(t.reg.For(lang)))
+	t.cache[key] = c
+	return c, nil
+}
+
+// fragment executes a named sub-template of page in the request language.
+func (a *App) fragment(w http.ResponseWriter, r *http.Request, page, name string, data any) {
+	t, err := a.tmpl.get(a.lang(r), page)
+	if err == nil {
+		var buf bytes.Buffer
+		if err = t.ExecuteTemplate(&buf, name, data); err == nil {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Write(buf.Bytes())
+			return
+		}
+	}
+	slog.Error("template rendering failed", "page", page, "name", name, "err", err)
+	http.Error(w, a.loc(r).T("err.internal"), http.StatusInternalServerError)
 }
 
 func humanSize(n int64) string {
@@ -198,7 +262,7 @@ func breadcrumbs(p string) []crumb {
 
 // View is the data passed to every page template.
 type View struct {
-	Title    string
+	Title    i18n.Msg
 	Nav      string
 	Tab      string
 	S        *Session
@@ -211,9 +275,58 @@ type View struct {
 	D        map[string]any
 }
 
+// ---- language ----
+
+const langCookie = "svngo_lang"
+
+type langKey struct{}
+
+// resolveLang picks the UI language: the signed-in user's choice, else (when
+// signed out) the language cookie, else the browser's Accept-Language, else
+// the system default.
+func (a *App) resolveLang(r *http.Request, s *Session) string {
+	if s != nil {
+		if s.Lang != "" && a.i18n.Has(s.Lang) {
+			return s.Lang
+		}
+	} else if c, err := r.Cookie(langCookie); err == nil && a.i18n.Has(c.Value) {
+		return c.Value
+	}
+	if m := a.i18n.Match(r.Header.Get("Accept-Language")); m != "" {
+		return m
+	}
+	return a.defaultLang(r.Context())
+}
+
+// defaultLang is the system default language setting (if still available).
+func (a *App) defaultLang(ctx context.Context) string {
+	if d := store.Setting(ctx, a.db, "default_lang"); a.i18n.Has(d) {
+		return d
+	}
+	return i18n.Base
+}
+
+// withLang stores the resolved language in the request context.
+func (a *App) withLang(r *http.Request, s *Session) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), langKey{}, a.resolveLang(r, s)))
+}
+
+// lang returns the request language (resolved by the auth middleware or from
+// cookie / Accept-Language for anonymous requests).
+func (a *App) lang(r *http.Request) string {
+	if l, ok := r.Context().Value(langKey{}).(string); ok {
+		return l
+	}
+	return a.resolveLang(r, nil)
+}
+
+func (a *App) loc(r *http.Request) *i18n.Localizer { return a.i18n.For(a.lang(r)) }
+
 func (a *App) render(w http.ResponseWriter, r *http.Request, s *Session, status int, page string, v *View) {
-	t, ok := a.tmpl.pages[page]
-	if !ok {
+	lang := a.lang(r)
+	t, err := a.tmpl.get(lang, page)
+	if err != nil {
+		slog.Error("template not found", "page", page, "err", err)
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
 	}
@@ -233,22 +346,24 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, s *Session, status 
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", v); err != nil {
-		slog.Error("템플릿 렌더링 실패", "page", page, "err", err)
-		http.Error(w, "내부 오류", http.StatusInternalServerError)
+		slog.Error("template rendering failed", "page", page, "err", err)
+		http.Error(w, a.i18n.T(lang, "err.internal"), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Language", lang)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	w.Write(buf.Bytes())
 }
 
-func (a *App) errorPage(w http.ResponseWriter, r *http.Request, s *Session, status int, msg string) {
-	a.render(w, r, s, status, "error", &View{Title: "오류", D: map[string]any{"Status": status, "Message": msg}})
+// errorPage renders an error; msg may be an i18n.Msg, an error or a string.
+func (a *App) errorPage(w http.ResponseWriter, r *http.Request, s *Session, status int, msg any) {
+	a.render(w, r, s, status, "error", &View{Title: i18n.M("title.error"), D: map[string]any{"Status": status, "Message": msg}})
 }
 
 func (a *App) notFound(w http.ResponseWriter, r *http.Request, s *Session) {
-	a.errorPage(w, r, s, http.StatusNotFound, "요청한 항목을 찾을 수 없거나 접근 권한이 없습니다.")
+	a.errorPage(w, r, s, http.StatusNotFound, i18n.M("err.not_found"))
 }
 
 // ---- flash messages & redirects ----
@@ -279,12 +394,13 @@ func readFlash(w http.ResponseWriter, r *http.Request) (string, bool, bool) {
 	return string(b), c.Value[0] == 'e', true
 }
 
-// done sets a flash message and redirects (HTMX aware).
-func (a *App) done(w http.ResponseWriter, r *http.Request, to string, msg string, err error) {
+// done sets a flash message in the request language and redirects (HTMX aware).
+func (a *App) done(w http.ResponseWriter, r *http.Request, to string, msg i18n.Msg, err error) {
+	l := a.loc(r)
 	if err != nil {
-		a.setFlash(w, r, err.Error(), true)
-	} else if msg != "" {
-		a.setFlash(w, r, msg, false)
+		a.setFlash(w, r, l.Err(err), true)
+	} else if !msg.IsZero() {
+		a.setFlash(w, r, l.Msg(msg), false)
 	}
 	a.redirect(w, r, to)
 }
@@ -355,6 +471,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /admin/{$}", U(a.handleHome))
 	mux.HandleFunc("GET /admin/account", U(a.handleAccount))
 	mux.HandleFunc("POST /admin/account/password", U(a.handleAccountPassword))
+	mux.HandleFunc("POST /admin/account/lang", U(a.handleAccountLang))
 
 	// repositories
 	mux.HandleFunc("GET /admin/repos", U(a.handleRepos))
@@ -422,16 +539,21 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /admin/system/logs", A(a.handleLogs))
 	mux.HandleFunc("GET /admin/api/status", A(a.handleAPIStatus))
 	mux.HandleFunc("POST /admin/system/svn-unblock", A(a.handleSvnUnblock))
+	mux.HandleFunc("POST /admin/system/access", A(a.handleAllowIPSave))
+	mux.HandleFunc("POST /admin/system/locales", A(a.handleLocaleUpload))
+	mux.HandleFunc("POST /admin/system/locales/reload", A(a.handleLocaleReload))
+	mux.HandleFunc("POST /admin/system/locales/{code}/delete", A(a.handleLocaleDelete))
+	mux.HandleFunc("GET /admin/system/locales/{file}", A(a.handleLocaleDownload))
 
 	// Rejects cross-site unsafe requests via Sec-Fetch-Site / Origin before any
 	// handler runs, in addition to the per-session CSRF tokens.
 	cop := http.NewCrossOriginProtection()
 	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.Warn("교차 출처 요청 차단", "method", r.Method, "path", r.URL.Path, "ip", clientIP(r),
+		slog.Warn("cross-origin request blocked", "method", r.Method, "path", r.URL.Path, "ip", clientIP(r),
 			"origin", validate.Clip(r.Header.Get("Origin"), 200), "sec_fetch_site", r.Header.Get("Sec-Fetch-Site"))
-		a.errorPage(w, r, nil, http.StatusForbidden, "잘못된 요청 출처입니다 (교차 출처 요청 차단).")
+		a.errorPage(w, r, nil, http.StatusForbidden, i18n.M("err.cross_origin"))
 	}))
-	return a.securityHeaders(cop.Handler(mux))
+	return a.securityHeaders(a.adminACL(cop.Handler(mux)))
 }
 
 func (a *App) securityHeaders(next http.Handler) http.Handler {

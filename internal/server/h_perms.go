@@ -3,33 +3,33 @@ package server
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"svngo/internal/authz"
+	"svngo/internal/i18n"
 	"svngo/internal/store"
 	"svngo/internal/validate"
 )
 
 type SubjectOption struct {
-	Value, Label string
+	Value string
+	Label i18n.Msg
 }
 
 // subjectOptions lists rule subjects for <select> elements.
 func (a *App) subjectOptions(ctx context.Context) []SubjectOption {
 	opts := []SubjectOption{
-		{"authenticated", "$authenticated (인증된 모든 사용자)"},
-		{"all", "* (모든 사용자)"},
+		{"authenticated", i18n.M("subject.authenticated")},
+		{"all", i18n.M("subject.all")},
 	}
 	if rows, err := a.db.QueryContext(ctx, "SELECT name FROM groups ORDER BY name"); err == nil {
 		for rows.Next() {
 			var n string
 			rows.Scan(&n)
-			opts = append(opts, SubjectOption{"group:" + n, "@" + n + " (그룹)"})
+			opts = append(opts, SubjectOption{"group:" + n, i18n.M("subject.group", n)})
 		}
 		rows.Close()
 	}
@@ -38,9 +38,9 @@ func (a *App) subjectOptions(ctx context.Context) []SubjectOption {
 			var n string
 			var en bool
 			rows.Scan(&n, &en)
-			label := n
+			label := i18n.Raw(n)
 			if !en {
-				label += " (비활성)"
+				label = i18n.M("subject.user_disabled", n)
 			}
 			opts = append(opts, SubjectOption{"user:" + n, label})
 		}
@@ -61,7 +61,7 @@ func parseSubject(v string) (typ, name string, err error) {
 		name = strings.TrimPrefix(v, "group:")
 		return "group", name, validate.GroupName(name)
 	}
-	return "", "", errors.New("권한 대상을 선택하세요")
+	return "", "", i18n.E("rule.err.subject")
 }
 
 // insertRule upserts a rule inside a transaction.
@@ -77,11 +77,11 @@ func insertRule(ctx context.Context, tx *sql.Tx, repoID int64, path, subject, ac
 	switch typ {
 	case "user":
 		if err := tx.QueryRowContext(ctx, "SELECT id FROM users WHERE username=?", name).Scan(&sid); err != nil {
-			return fmt.Errorf("사용자를 찾을 수 없습니다: %s", name)
+			return i18n.E("user.err.not_found", name)
 		}
 	case "group":
 		if err := tx.QueryRowContext(ctx, "SELECT id FROM groups WHERE name=?", name).Scan(&sid); err != nil {
-			return fmt.Errorf("그룹을 찾을 수 없습니다: %s", name)
+			return i18n.E("group.err.not_found", name)
 		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO rules(repo_id, path, subject_type, subject_id, access, created_at)
@@ -114,12 +114,12 @@ func (a *App) handlePerms(w http.ResponseWriter, r *http.Request, s *Session) {
 	}
 	rules, err := authz.ListRules(ctx, a.db, repo, subject)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	pg := newPager(r, len(rules), a.pageSize(r)*2)
 	page := rules[pg.Offset():min(pg.Offset()+pg.Size, len(rules))]
-	a.render(w, r, s, http.StatusOK, "perms", &View{Title: "권한", Nav: "perms", D: map[string]any{
+	a.render(w, r, s, http.StatusOK, "perms", &View{Title: i18n.M("nav.perms"), Nav: "perms", D: map[string]any{
 		"Rules": page, "Pager": pg, "Repo": repo, "Subject": subject,
 		"Repos": a.repoNames(ctx), "Subjects": a.subjectOptions(ctx), "Back": r.URL.RequestURI(),
 	}})
@@ -133,10 +133,10 @@ func (a *App) handleRepoPerms(w http.ResponseWriter, r *http.Request, s *Session
 	ctx := r.Context()
 	rules, err := authz.ListRules(ctx, a.db, repo.Name, "")
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
-	a.render(w, r, s, http.StatusOK, "repo_perms", &View{Title: repo.Name + " 권한", Nav: "repos", Tab: "perms", Repo: repo,
+	a.render(w, r, s, http.StatusOK, "repo_perms", &View{Title: i18n.M("title.repo_perms", repo.Name), Nav: "repos", Tab: "perms", Repo: repo,
 		D: map[string]any{"Rules": rules, "Subjects": a.subjectOptions(ctx), "Back": "/admin/repos/" + repo.Name + "/perms",
 			"Path": r.URL.Query().Get("path")}})
 }
@@ -152,7 +152,7 @@ func (a *App) handleRuleAdd(w http.ResponseWriter, r *http.Request, s *Session) 
 	err := func() error {
 		repo, err := a.getRepo(ctx, a.db, repoName)
 		if err != nil {
-			return errors.New("저장소를 선택하세요")
+			return i18n.E("rule.err.repo")
 		}
 		path, err := validate.RulePath(r.PostFormValue("path"))
 		if err != nil {
@@ -170,7 +170,7 @@ func (a *App) handleRuleAdd(w http.ResponseWriter, r *http.Request, s *Session) 
 		}
 		return a.verifyAccess(ctx, repo.Name, path, a.policy.Load().UsersOf(typ, name, 50))
 	}()
-	a.done(w, r, back, "권한을 저장했고 SVN 권한 엔진(libsvn)으로 적용 결과를 검증했습니다.", err)
+	a.done(w, r, back, i18n.M("rule.saved"), err)
 }
 
 func (a *App) ruleByID(ctx context.Context, idStr string) (*authz.Rule, error) {
@@ -188,7 +188,7 @@ func (a *App) handleRuleUpdate(w http.ResponseWriter, r *http.Request, s *Sessio
 	err := func() error {
 		rl, err := a.ruleByID(ctx, r.PathValue("id"))
 		if err != nil {
-			return errors.New("권한 규칙을 찾을 수 없습니다")
+			return i18n.E("rule.err.not_found")
 		}
 		if err := validate.Access(access); err != nil {
 			return err
@@ -202,7 +202,7 @@ func (a *App) handleRuleUpdate(w http.ResponseWriter, r *http.Request, s *Sessio
 		}
 		return a.verifyAccess(ctx, rl.Repo, rl.Path, a.policy.Load().UsersOf(rl.SubjectType, rl.Subject, 50))
 	}()
-	a.done(w, r, back, "권한을 변경했고 SVN 권한 엔진(libsvn)으로 검증했습니다.", err)
+	a.done(w, r, back, i18n.M("rule.updated"), err)
 }
 
 func (a *App) handleRuleDelete(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -211,7 +211,7 @@ func (a *App) handleRuleDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 	err := func() error {
 		rl, err := a.ruleByID(ctx, r.PathValue("id"))
 		if err != nil {
-			return errors.New("권한 규칙을 찾을 수 없습니다")
+			return i18n.E("rule.err.not_found")
 		}
 		affected := a.policy.Load().UsersOf(rl.SubjectType, rl.Subject, 50)
 		detail := fmt.Sprintf("[%s:%s] %s", rl.Repo, rl.Path, rl.SubjectLabel())
@@ -223,7 +223,7 @@ func (a *App) handleRuleDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 		}
 		return a.verifyAccess(ctx, rl.Repo, rl.Path, affected)
 	}()
-	a.done(w, r, back, "권한 규칙을 삭제했고 SVN 권한 엔진(libsvn)으로 검증했습니다.", err)
+	a.done(w, r, back, i18n.M("rule.deleted"), err)
 }
 
 // handleAccessCheck returns an HTML fragment comparing SvnGo's evaluation
@@ -238,22 +238,19 @@ func (a *App) handleAccessCheck(w http.ResponseWriter, r *http.Request, s *Sessi
 	path, err := validate.RulePath(r.URL.Query().Get("path"))
 	switch {
 	case validate.Username(user) != nil:
-		data["Error"] = "사용자 이름을 입력하세요"
+		data["Error"] = i18n.M("perms.err.username")
 	case err != nil:
-		data["Error"] = err.Error()
+		data["Error"] = err
 	default:
 		data["Path"] = path
 		data["Want"] = a.policy.Load().Access(repo.Name, path, user)
 		if a.svn.Authz != "" {
 			got, err := a.svn.AccessOf(r.Context(), a.cfg.AuthzFile(), repo.Name, path, user)
 			if err != nil {
-				data["Error"] = err.Error()
+				data["Error"] = err
 			}
 			data["Got"] = got
 		}
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.tmpl.pages["repo_perms"].ExecuteTemplate(w, "access_result", data); err != nil {
-		http.Error(w, template.HTMLEscapeString(err.Error()), 500)
-	}
+	a.fragment(w, r, "repo_perms", "access_result", data)
 }

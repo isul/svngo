@@ -1,24 +1,24 @@
 {{define "content"}}
 {{template "system_tabs" .}}
 <nav class="subtabs">
-  <a href="/admin/system/logs" class="{{if eq .D.Src "audit"}}active{{end}}">감사 로그</a>
-  <a href="/admin/system/logs?src=app" class="{{if eq .D.Src "app"}}active{{end}}">관리 서버</a>
-  <a href="/admin/system/logs?src=apache" class="{{if eq .D.Src "apache"}}active{{end}}">Apache (SVN 접근/오류)</a>
+  <a href="/admin/system/logs" class="{{if eq .D.Src "audit"}}active{{end}}">{{t "logs.audit"}}</a>
+  <a href="/admin/system/logs?src=app" class="{{if eq .D.Src "app"}}active{{end}}">{{t "logs.app"}}</a>
+  <a href="/admin/system/logs?src=apache" class="{{if eq .D.Src "apache"}}active{{end}}">{{t "logs.apache"}}</a>
 </nav>
 {{if eq .D.Src "audit"}}
 <section class="box">
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>시각</th><th>사용자</th><th>작업</th><th>내용</th></tr></thead>
-    <tbody>{{range .D.Audits}}<tr><td class="nowrap small">{{dt .At}}</td><td>{{.Actor}}</td><td class="nowrap" title="{{.Action}}">{{auditLabel .Action}}</td><td class="small break">{{.Detail}}</td></tr>{{else}}<tr><td colspan="4" class="empty">기록이 없습니다.</td></tr>{{end}}</tbody>
+    <thead><tr><th>{{t "audit.col.time"}}</th><th>{{t "audit.col.actor"}}</th><th>{{t "audit.col.action"}}</th><th>{{t "audit.col.detail"}}</th></tr></thead>
+    <tbody>{{range .D.Audits}}<tr><td class="nowrap small">{{dt .At}}</td><td>{{.Actor}}</td><td class="nowrap" title="{{.Action}}">{{auditLabel .Action}}</td><td class="small break">{{.Detail}}</td></tr>{{else}}<tr><td colspan="4" class="empty">{{t "audit.none"}}</td></tr>{{end}}</tbody>
   </table></div>
   {{template "pager" .D.Pager}}
 </section>
 {{else}}
 <section class="box">
-  <div class="box-head"><p class="muted small">최근 1000줄 (최신순, 메모리 보관). 전체 로그는 <code>docker compose logs</code> 로 확인하세요.</p>
-    <a class="btn sm" href="/admin/system/logs?src={{.D.Src}}">새로고침</a></div>
+  <div class="box-head"><p class="muted small">{{th "logs.hint" (code "docker compose logs")}}</p>
+    <a class="btn sm" href="/admin/system/logs?src={{.D.Src}}">{{t "common.refresh"}}</a></div>
   <pre class="log">{{range .D.Lines}}{{.}}
-{{else}}(로그 없음){{end}}</pre>
+{{else}}({{t "logs.none"}}){{end}}</pre>
 </section>
 {{end}}
 {{end}}

@@ -92,9 +92,9 @@ func (g *Guard) Fail(ip string) {
 	err := g.writeLocked()
 	g.mu.Unlock()
 	if err != nil {
-		slog.Error("SVN 차단 목록 기록 실패", "err", err)
+		slog.Error("writing the SVN block list failed", "err", err)
 	}
-	slog.Warn("SVN 로그인 실패 누적으로 IP 를 차단했습니다", "ip", ip, "fails", n, "until", now.Add(window).Format(time.DateTime))
+	slog.Warn("IP blocked after repeated SVN login failures", "ip", ip, "fails", n, "until", now.Add(window).Format(time.DateTime))
 	if g.onBlock != nil {
 		g.onBlock(ip, n)
 	}
@@ -161,7 +161,7 @@ func (g *Guard) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			if err := g.Prune(); err != nil {
-				slog.Error("SVN 차단 목록 정리 실패", "err", err)
+				slog.Error("pruning the SVN block list failed", "err", err)
 			}
 		}
 	}

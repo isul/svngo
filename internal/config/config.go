@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"svngo/internal/ipacl"
 	"svngo/internal/validate"
 )
 
@@ -42,6 +43,10 @@ type Config struct {
 	BcryptCost   int
 	CookieSecure string // auto | always | never
 	SessionTTL   time.Duration
+
+	// Fixed client IP allow lists, added to the lists edited in the web UI.
+	AdminAllowEnv ipacl.List
+	SvnAllowEnv   ipacl.List
 
 	SvnAdmin string
 	SvnLook  string
@@ -107,7 +112,7 @@ func Load() (*Config, error) {
 	if f := Env("ADMIN_PASSWORD_FILE", ""); f != "" {
 		b, err := os.ReadFile(f)
 		if err != nil {
-			return nil, fmt.Errorf("ADMIN_PASSWORD_FILE 읽기 실패: %w", err)
+			return nil, fmt.Errorf("reading ADMIN_PASSWORD_FILE failed: %w", err)
 		}
 		c.AdminPassword = strings.TrimRight(string(b), "\r\n")
 	}
@@ -116,7 +121,7 @@ func Load() (*Config, error) {
 	// affects commit/checkout latency (htpasswd -B uses 5 by default).
 	cost, err := strconv.Atoi(Env("SVNGO_BCRYPT_COST", "8"))
 	if err != nil || cost < 5 || cost > 14 {
-		return nil, fmt.Errorf("SVNGO_BCRYPT_COST 는 5~14 사이여야 합니다")
+		return nil, fmt.Errorf("SVNGO_BCRYPT_COST must be between 5 and 14")
 	}
 	c.BcryptCost = cost
 
@@ -130,24 +135,37 @@ func Load() (*Config, error) {
 	} {
 		mb, err := strconv.Atoi(Env(l.key, l.def))
 		if err != nil || mb < 0 || mb > 2047 {
-			return nil, fmt.Errorf("%s 는 0(무제한)~2047 사이여야 합니다", l.key)
+			return nil, fmt.Errorf("%s must be between 0 (unlimited) and 2047", l.key)
 		}
 		*l.dst = int64(mb) << 20
 	}
 
 	hours, err := strconv.Atoi(Env("SVNGO_SESSION_HOURS", "12"))
 	if err != nil || hours < 1 || hours > 720 {
-		return nil, fmt.Errorf("SVNGO_SESSION_HOURS 는 1~720 사이여야 합니다")
+		return nil, fmt.Errorf("SVNGO_SESSION_HOURS must be between 1 and 720")
 	}
 	c.SessionTTL = time.Duration(hours) * time.Hour
 
 	switch c.CookieSecure {
 	case "auto", "always", "never":
 	default:
-		return nil, fmt.Errorf("SVNGO_COOKIE_SECURE 는 auto|always|never 중 하나여야 합니다")
+		return nil, fmt.Errorf("SVNGO_COOKIE_SECURE must be one of auto|always|never")
 	}
 	if err := validate.Username(c.AdminUser); err != nil {
 		return nil, fmt.Errorf("ADMIN_USERNAME: %w", err)
+	}
+	for _, l := range []struct {
+		key string
+		dst *ipacl.List
+	}{
+		{"SVNGO_ADMIN_ALLOW_IPS", &c.AdminAllowEnv},
+		{"SVNGO_SVN_ALLOW_IPS", &c.SvnAllowEnv},
+	} {
+		list, err := ipacl.Parse(os.Getenv(l.key))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", l.key, err)
+		}
+		*l.dst = list
 	}
 	for _, d := range []*string{&c.ReposDir, &c.ConfigDir, &c.DBDir, &c.BackupDir, &c.RunDir} {
 		abs, err := filepath.Abs(*d)
@@ -157,10 +175,10 @@ func Load() (*Config, error) {
 		*d = abs
 	}
 	if c.SvnAdmin == "" || c.SvnLook == "" || c.Svn == "" {
-		return nil, fmt.Errorf("svnadmin / svnlook / svn 실행 파일을 찾을 수 없습니다")
+		return nil, fmt.Errorf("svnadmin / svnlook / svn executables not found")
 	}
 	if c.SvnAuthz == "" {
-		return nil, fmt.Errorf("authz 검증 도구(svngo-authz 또는 svnauthz)를 찾을 수 없습니다. SVNGO_SVNAUTHZ 로 경로를 지정하세요")
+		return nil, fmt.Errorf("authz validator (svngo-authz or svnauthz) not found; set its path with SVNGO_SVNAUTHZ")
 	}
 	return c, nil
 }
@@ -168,16 +186,17 @@ func Load() (*Config, error) {
 func (c *Config) HtpasswdFile() string { return filepath.Join(c.ConfigDir, "htpasswd") }
 func (c *Config) AuthzFile() string    { return filepath.Join(c.ConfigDir, "authz") }
 func (c *Config) DBFile() string       { return filepath.Join(c.DBDir, "svngo.db") }
+func (c *Config) LocalesDir() string   { return filepath.Join(c.ConfigDir, "locales") }
 func (c *Config) TmpDir() string       { return filepath.Join(c.ReposDir, ".svngo-tmp") }
 
 func (c *Config) EnsureDirs() error {
 	for _, d := range []string{c.ReposDir, c.ConfigDir, c.DBDir, c.BackupDir, c.RunDir, c.TmpDir()} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
-			return fmt.Errorf("디렉터리 생성 실패 %s: %w", d, err)
+			return fmt.Errorf("creating directory %s failed: %w", d, err)
 		}
 		probe := filepath.Join(d, ".svngo-write-test")
 		if err := os.WriteFile(probe, nil, 0o600); err != nil {
-			return fmt.Errorf("디렉터리 쓰기 권한 없음 %s (볼륨 소유권을 확인하세요): %w", d, err)
+			return fmt.Errorf("directory %s is not writable (check the volume ownership): %w", d, err)
 		}
 		os.Remove(probe)
 	}

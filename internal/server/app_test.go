@@ -95,9 +95,24 @@ type client struct {
 	csrf string
 }
 
-func (e *testEnv) client() *client {
+// langTransport sends a fixed Accept-Language header unless the request sets one.
+type langTransport struct{ lang string }
+
+func (t langTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.lang != "" && r.Header.Get("Accept-Language") == "" {
+		r = r.Clone(r.Context())
+		r.Header.Set("Accept-Language", t.lang)
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// client returns a browser whose language is Korean, which page assertions use.
+func (e *testEnv) client() *client { return e.clientLang("ko") }
+
+// clientLang returns a browser sending the given Accept-Language ("" = none).
+func (e *testEnv) clientLang(lang string) *client {
 	jar, _ := cookiejar.New(nil)
-	return &client{e: e, http: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error {
+	return &client{e: e, http: &http.Client{Jar: jar, Transport: langTransport{lang}, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}}
 }

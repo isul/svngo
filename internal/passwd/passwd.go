@@ -6,10 +6,10 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/subtle"
-	"fmt"
 	"io"
 	"strings"
 
+	"svngo/internal/i18n"
 	"svngo/internal/validate"
 
 	"golang.org/x/crypto/bcrypt"
@@ -157,7 +157,7 @@ type Entry struct {
 
 // ParseHtpasswd parses an htpasswd file for import. Unsupported hash formats
 // are returned in rejected with a reason.
-func ParseHtpasswd(r io.Reader) (ok []Entry, rejected []string, err error) {
+func ParseHtpasswd(r io.Reader) (ok []Entry, rejected []i18n.Msg, err error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 64*1024)
 	seen := map[string]bool{}
@@ -170,19 +170,19 @@ func ParseHtpasswd(r io.Reader) (ok []Entry, rejected []string, err error) {
 		}
 		user, hash, found := strings.Cut(s, ":")
 		if !found {
-			rejected = append(rejected, fmt.Sprintf("%d행: 형식 오류", line))
+			rejected = append(rejected, i18n.M("import.err.format", line))
 			continue
 		}
 		if err := validate.Username(user); err != nil {
-			rejected = append(rejected, fmt.Sprintf("%d행: 사용자 이름 %q 사용 불가", line, validate.Clip(user, 40)))
+			rejected = append(rejected, i18n.M("import.err.username", line, validate.Clip(user, 40)))
 			continue
 		}
 		if !ValidStoredHash(hash) {
-			rejected = append(rejected, fmt.Sprintf("%s: 지원하지 않는 해시 형식 (bcrypt, APR1-MD5 만 지원)", user))
+			rejected = append(rejected, i18n.M("import.err.hash", user))
 			continue
 		}
 		if seen[user] {
-			rejected = append(rejected, fmt.Sprintf("%s: 중복 항목", user))
+			rejected = append(rejected, i18n.M("import.err.duplicate", user))
 			continue
 		}
 		seen[user] = true

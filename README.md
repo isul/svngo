@@ -1,148 +1,152 @@
 # SvnGo
 
-Go로 작성한 경량 Subversion(SVN) 서버 및 웹 관리 시스템입니다.
-**Apache httpd + mod_dav_svn**이 SVN HTTP(S) 프로토콜을 처리하고, **Go 관리 서버**가 저장소·사용자·그룹·권한을 관리합니다. 모든 구성 요소가 Docker 컨테이너 하나에 들어 있습니다.
+**English** | [한국어](README.ko.md)
 
-- PHP / Node / Java / Redis / ORM / 프론트엔드 프레임워크를 사용하지 않습니다.
-- 이미지 약 36MB, 유휴 메모리는 컨테이너 전체 약 12MB 수준입니다(Apache 포함).
-- amd64 / arm64 멀티 아키텍처 빌드를 지원합니다.
-- 빌드된 이미지는 Docker Hub [isul/svngo](https://hub.docker.com/r/isul/svngo)에서 받을 수 있습니다.
+A lightweight Subversion (SVN) server and web administration system written in Go.
+**Apache httpd + mod_dav_svn** serves the SVN HTTP(S) protocol, and a **Go admin server** manages repositories, users, groups and permissions. Everything runs in a single Docker container.
 
-## 구조
+- No PHP / Node / Java / Redis / ORM / frontend framework.
+- The image is about 36 MB, and the whole container idles at about 12 MB of memory (Apache included).
+- Multi-architecture builds for amd64 / arm64.
+- Prebuilt images are available on Docker Hub: [isul/svngo](https://hub.docker.com/r/isul/svngo).
+
+## Architecture
 
 ```
-                       ┌──────────────────── SvnGo 컨테이너 (non-root, uid 1000) ─────────────────────┐
- svn 클라이언트 ─HTTP(S)─▶ Apache httpd :8080 / :8443                                                  │
- 웹 브라우저            │   ├─ /svn/<저장소>  mod_dav_svn + mod_authz_svn + mod_auth_basic/authn_file   │
-                       │   │                  (htpasswd: bcrypt, authz: 경로별 권한)                     │
-                       │   └─ /admin         reverse proxy ──▶ Go 관리 서버 127.0.0.1:9000           │
-                       │                                         ├─ SQLite (WAL) : 단일 진실 원천     │
-                       │                                         ├─ htpasswd / authz 생성·검증·원자적 교체│
-                       │                                         ├─ svnadmin / svnlook / svn (file://) │
-                       │                                         └─ Apache 프로세스 감독(재시작/종료)  │
-                       └──────────────────────────────────────────────────────────────────────────────┘
- 볼륨: /data/repos  /data/config(htpasswd, authz, tls/)  /data/db  /data/backups
+                       ┌─────────────────────── SvnGo container (non-root, uid 1000) ────────────────────────┐
+ svn client ───HTTP(S)─▶ Apache httpd :8080 / :8443                                                          │
+ web browser           │   ├─ /svn/<repo>    mod_dav_svn + mod_authz_svn + mod_auth_basic/authn_file         │
+                       │   │                 (htpasswd: bcrypt, authz: per-path permissions)                 │
+                       │   └─ /admin         reverse proxy ──▶ Go admin server 127.0.0.1:9000                │
+                       │                                       ├─ SQLite (WAL): single source of truth       │
+                       │                                       ├─ generates, verifies and atomically swaps   │
+                       │                                       │  htpasswd / authz                           │
+                       │                                       ├─ svnadmin / svnlook / svn (file://)         │
+                       │                                       └─ supervises Apache (restart / stop)         │
+                       └─────────────────────────────────────────────────────────────────────────────────────┘
+ Volumes: /data/repos  /data/config (htpasswd, authz, tls/, locales/)  /data/db  /data/backups
 ```
 
-- **SQLite가 단일 진실 원천**입니다. 사용자/그룹/권한이 바뀔 때마다 DB 트랜잭션 안에서 `htpasswd`와 `authz`를 다시 생성합니다. 생성한 파일은 libsvn(`svngo-authz`)으로 검증한 뒤 임시 파일 → fsync → rename으로 원자적으로 교체하고, 다시 읽어서 비교합니다. 이 과정이 모두 성공해야 DB를 커밋하며, 실패하면 이전 파일로 되돌립니다.
-- Apache는 요청마다 `htpasswd`/`authz` 파일을 읽으므로 저장소·사용자·권한 변경에 **Apache 재시작이 필요 없습니다**.
-- 웹 관리자 계정(DB)과 SVN 사용자 계정(htpasswd)은 분리되어 있습니다. SVN 사용자도 웹에 로그인할 수 있지만, **자신에게 SVN 권한이 있는 저장소와 경로만** 조회할 수 있습니다.
+- **SQLite is the single source of truth.** Whenever users, groups or permissions change, `htpasswd` and `authz` are regenerated inside the DB transaction. The generated files are verified with libsvn (`svngo-authz`), swapped in atomically (temp file → fsync → rename) and read back for comparison. The DB is committed only if all of this succeeds; otherwise the previous files are restored.
+- Apache reads the `htpasswd`/`authz` files on every request, so changes to repositories, users and permissions **never require an Apache restart**.
+- Web admin accounts (DB) and SVN user accounts (htpasswd) are separate. SVN users can also sign in to the web UI, but they can only browse **the repositories and paths they have SVN access to**.
 
-## 주요 기능
+## Features
 
-| 영역 | 기능 |
+| Area | Features |
 |---|---|
-| 대시보드 | 저장소/사용자/그룹/권한 수, Apache 상태, 디스크 사용량, 최근 작업과 변경 이력 |
-| 저장소 | 생성(trunk/branches/tags 선택), 목록·검색·페이징, 이름 변경, 삭제(이름 재입력 확인), 활성/비활성, UUID·리비전·크기(캐시), 검증(`svnadmin verify`), 백업(dump.gz)·복원 |
-| 웹 브라우징 | 디렉터리/파일 보기, 리비전 지정 보기, 원본 다운로드(스트리밍), 커밋 로그(페이징), 변경 파일, diff, 작성자·메시지. 모든 화면에 SVN 권한이 적용됩니다. |
-| 사용자 | 생성, 수정, 삭제, 비밀번호 변경, 임시 비밀번호 발급, 활성/비활성, 검색, htpasswd 가져오기(bcrypt/APR1) |
-| 그룹 | 생성, 수정, 삭제, 멤버 추가·제거 |
-| 권한 | 저장소·디렉터리 단위 읽기/읽기쓰기/접근 금지. 대상은 사용자, 그룹, 인증된 모든 사용자(`$authenticated`), 모든 사용자(`*`). 저장 후 libsvn으로 실제 적용 결과를 검증하며, 권한 확인 도구로 즉시 확인할 수 있습니다. |
-| 시스템 설정 | SVN 기본 URL, 기본 레이아웃, 페이지 크기, 로그인 시도 제한, 관리자 계정 관리, 인증 파일 동기화 검증·재생성, 저장소 디렉터리 스캔(등록) |
-| 백업 | 백업 목록·다운로드·삭제·업로드, 새 저장소로 복원 또는 덮어쓰기 복원 |
-| 로그 | 감사 로그(누가 무엇을 바꿨는지), 애플리케이션 로그, Apache 로그 |
+| Dashboard | Counts of repositories/users/groups/permissions, Apache status, disk usage, recent jobs and changes |
+| Repositories | Create (optional trunk/branches/tags), list, search and paging, rename, delete (confirm by retyping the name), enable/disable, UUID, revision and size (cached), verify (`svnadmin verify`), backup (dump.gz) and restore |
+| Web browsing | Directory and file views, view at a revision, raw download (streamed), commit log (paged), changed files, diff, author and message. SVN permissions apply to every page. |
+| Users | Create, edit, delete, change password, issue a temporary password, enable/disable, search, import htpasswd (bcrypt/APR1) |
+| Groups | Create, edit, delete, add and remove members |
+| Permissions | Read / read-write / no access per repository and directory. Subjects are users, groups, all authenticated users (`$authenticated`) and everyone (`*`). After saving, the effective result is verified with libsvn, and the access check tool shows it immediately. |
+| System settings | SVN base URL, default layout, page size, login attempt limits, allowed IPs for the admin UI and SVN, web admin accounts, auth file sync check and regeneration, repository directory scan (registration) |
+| Backups | List, download, delete and upload backups; restore into a new repository or overwrite an existing one |
+| Logs | Audit log (who changed what), application log, Apache log |
+| Languages | English and Korean built in, automatic selection from the browser language, per-user language in My account, system default language, add/upload/download language files (JSON) |
 
-## 화면 미리보기
+## Screenshots
 
-샘플 데이터(저장소 5개, 사용자 7명, 그룹 4개)로 촬영한 웹 관리 화면입니다.
+Web admin pages captured with sample data (5 repositories, 7 users, 4 groups) in the English UI.
 
-**대시보드**: 저장소·사용자·그룹·권한 수, Apache 상태, 디스크 사용량, 최근 작업과 변경 이력
+**Dashboard**: counts of repositories, users, groups and permissions, Apache status, disk usage, recent jobs and changes
 
-![대시보드](docs/images/02-dashboard.png)
+![Dashboard](docs/images/en/02-dashboard.png)
 
-**저장소 개요**: 체크아웃 URL, UUID·리비전·크기, 최근 커밋
+**Repository overview**: checkout URL, UUID, revision and size, recent commits
 
-![저장소 개요](docs/images/04-repo-overview.png)
+![Repository overview](docs/images/en/04-repo-overview.png)
 
-**커밋 상세와 diff**: 작성자·메시지, 변경 파일, 파일별 diff
+**Commit details and diff**: author and message, changed files, per-file diff
 
-![커밋 상세와 diff](docs/images/08-repo-commit-diff.png)
+![Commit details and diff](docs/images/en/08-repo-commit-diff.png)
 
-**저장소 권한**: 경로별 권한 규칙과 권한 확인 도구(SvnGo 평가와 libsvn 실제 결과를 함께 표시)
+**Repository permissions**: per-path permission rules and the access check tool (SvnGo's evaluation shown next to the actual libsvn result)
 
-![저장소 권한](docs/images/09-repo-perms.png)
+![Repository permissions](docs/images/en/09-repo-perms.png)
 
 <details>
-<summary>화면 더 보기 (로그인, 저장소 목록, 파일 브라우저, 사용자·그룹, 시스템 설정, 백업, 로그, 다크 모드)</summary>
+<summary>More screenshots (login, repository list, file browser, users and groups, system settings, backups, logs, dark mode)</summary>
 
-**로그인**
+**Login**
 
-![로그인](docs/images/01-login.png)
+![Login](docs/images/en/01-login.png)
 
-**저장소 목록**
+**Repository list**
 
-![저장소 목록](docs/images/03-repos.png)
+![Repository list](docs/images/en/03-repos.png)
 
-**파일 브라우저**
+**File browser**
 
-![파일 브라우저](docs/images/05-repo-files.png)
+![File browser](docs/images/en/05-repo-files.png)
 
-**파일 보기**
+**File view**
 
-![파일 보기](docs/images/06-repo-file.png)
+![File view](docs/images/en/06-repo-file.png)
 
-**커밋 로그**
+**Commit log**
 
-![커밋 로그](docs/images/07-repo-commits.png)
+![Commit log](docs/images/en/07-repo-commits.png)
 
-**전체 권한 규칙**
+**All permission rules**
 
-![전체 권한 규칙](docs/images/10-perms.png)
+![All permission rules](docs/images/en/10-perms.png)
 
-**사용자 목록**
+**User list**
 
-![사용자 목록](docs/images/11-users.png)
+![User list](docs/images/en/11-users.png)
 
-**사용자 수정**: 정보 수정, 비밀번호 변경·임시 비밀번호 발급, 그룹, 유효 권한
+**Edit user**: edit details, change password or issue a temporary password, groups, effective permissions
 
-![사용자 수정](docs/images/12-user-edit.png)
+![Edit user](docs/images/en/12-user-edit.png)
 
-**그룹 목록**
+**Group list**
 
-![그룹 목록](docs/images/13-groups.png)
+![Group list](docs/images/en/13-groups.png)
 
-**그룹 수정**: 멤버 추가·제외, 그룹 권한
+**Edit group**: add and remove members, group permissions
 
-![그룹 수정](docs/images/14-group-edit.png)
+![Edit group](docs/images/en/14-group-edit.png)
 
-**시스템 설정**: 서버 상태, 인증 파일 동기화 검증, SVN 접속 차단 목록, 서버 설정, 웹 관리자 계정
+**System settings**: server status, auth file sync check, SVN access block list, server settings, web admin accounts
 
-![시스템 설정](docs/images/15-system.png)
+![System settings](docs/images/en/15-system.png)
 
-**백업 / 복원**
+**Backup / restore**
 
-![백업 / 복원](docs/images/16-backups.png)
+![Backup / restore](docs/images/en/16-backups.png)
 
-**감사 로그**
+**Audit log**
 
-![감사 로그](docs/images/17-logs.png)
+![Audit log](docs/images/en/17-logs.png)
 
-**다크 모드**: 운영체제 설정(`prefers-color-scheme`)을 따릅니다.
+**Dark mode**: follows the operating system setting (`prefers-color-scheme`).
 
-![다크 모드 대시보드](docs/images/18-dashboard-dark.png)
+![Dark mode dashboard](docs/images/en/18-dashboard-dark.png)
 
-**SVN 사용자로 로그인한 화면**: 권한이 있는 저장소만 보이고 관리 메뉴는 표시되지 않습니다(QA 그룹 사용자 `jung.hoon`).
+**Signed in as an SVN user**: only repositories the user can access are listed and the admin menus are hidden (user `jung.hoon` of the QA group).
 
-![SVN 사용자 화면](docs/images/19-svn-user-repos.png)
+![SVN user view](docs/images/en/19-svn-user-repos.png)
 
 </details>
 
-## Docker Hub 이미지
+## Docker Hub image
 
-소스를 빌드하지 않고 Docker Hub에 올라간 이미지를 바로 쓸 수 있습니다.
+You can use the image published on Docker Hub instead of building from source.
 
-- 저장소: [hub.docker.com/r/isul/svngo](https://hub.docker.com/r/isul/svngo)
-- 이미지 이름: `isul/svngo`
+- Repository: [hub.docker.com/r/isul/svngo](https://hub.docker.com/r/isul/svngo)
+- Image name: `isul/svngo`
 
-| 태그 | 플랫폼 | 설명 |
+| Tag | Platform | Description |
 |---|---|---|
-| `1.0.0` | linux/amd64 | 버전 고정. 운영 환경에 권장 |
-| `latest` | linux/amd64 | 가장 최근 릴리스 |
+| `1.0.0` | linux/amd64 | Pinned version. Recommended for production |
+| `latest` | linux/amd64 | Latest release |
 
-- 구성: Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26
-- ARM CPU 호스트(일부 시놀로지 모델, Raspberry Pi 등)에서는 [멀티 아키텍처 빌드](#멀티-아키텍처-빌드)로 arm64 이미지를 직접 만들어야 합니다.
+- Built with Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26.
+- On ARM hosts (some Synology models, Raspberry Pi, etc.) build an arm64 image yourself with a [multi-architecture build](#multi-architecture-build).
 
-### docker run으로 실행 (Windows 11 PowerShell)
+### Run with docker run (Windows 11 PowerShell)
 
 ```powershell
 docker run -d --name svngo --restart unless-stopped `
@@ -158,11 +162,11 @@ docker run -d --name svngo --restart unless-stopped `
   isul/svngo:1.0.0
 ```
 
-PowerShell은 따옴표 없는 쉼표를 배열 구분자로 해석하므로 `--tmpfs` 값은 따옴표로 감쌉니다. 각 옵션의 의미는 [컨테이너 보안 옵션](#컨테이너-보안-옵션)을 참고하세요.
+PowerShell treats unquoted commas as array separators, so quote the `--tmpfs` values. See [Container security options](#container-security-options) for what each option does.
 
-### docker compose로 실행
+### Run with docker compose
 
-이 저장소의 `docker-compose.yml`에서 `build:` 블록과 `image:` 줄을 다음처럼 바꾸면, 빌드하지 않고 Docker Hub 이미지를 사용합니다. 나머지 설정과 `.env`는 그대로 씁니다.
+Replace the `build:` block and the `image:` line in this repository's `docker-compose.yml` as follows to use the Docker Hub image without building. Keep the rest of the settings and `.env` as they are.
 
 ```yaml
 services:
@@ -173,108 +177,110 @@ services:
 ```powershell
 docker compose pull
 docker compose up -d
-docker compose ps        # STATUS 가 healthy 이면 준비 완료
+docker compose ps        # ready when STATUS is healthy
 ```
 
-### 이미지 업데이트
+### Updating the image
 
-데이터는 네 볼륨에 있으므로 컨테이너를 새 이미지로 다시 만들어도 유지됩니다. 업데이트 전에 볼륨을 백업해 두는 것을 권장합니다.
+All data lives in the four volumes, so it survives recreating the container from a new image. Back up the volumes before updating.
 
 ```powershell
-# compose: 태그를 새 버전으로 바꾼 뒤
+# compose: change the tag to the new version, then
 docker compose pull
 docker compose up -d
 
-# docker run: 새 이미지를 받고 기존 컨테이너를 지운 뒤
-docker pull isul/svngo:<새버전>
+# docker run: pull the new image and remove the old container, then
+docker pull isul/svngo:<new-version>
 docker stop svngo; docker rm svngo
-# 위 docker run 명령을 새 태그로 다시 실행합니다(볼륨 이름은 그대로)
+# run the docker run command above again with the new tag (same volume names)
 ```
 
-## 빠른 시작 (Windows 11 PowerShell)
+## Quick start (Windows 11 PowerShell)
 
-소스에서 이미지를 직접 빌드해 실행하는 방법입니다. 빌드 없이 쓰려면 [Docker Hub 이미지](#docker-hub-이미지)를 참고하세요.
+This builds the image from source and runs it. To skip the build, see [Docker Hub image](#docker-hub-image).
 
-사전 준비: [Docker Desktop](https://www.docker.com/products/docker-desktop/)을 설치하고 실행합니다.
+Prerequisite: install and start [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
 ```powershell
 cd C:\work\svngo
 
-# 1) 환경 파일 만들기 (관리자 비밀번호를 반드시 변경하세요)
+# 1) Create the environment file (be sure to change the admin password)
 Copy-Item .env.example .env
 notepad .env
 
-# 2) 빌드 및 실행
+# 2) Build and start
 docker compose up -d --build
 
-# 3) 상태 확인 (STATUS 가 healthy 가 되면 준비 완료)
+# 3) Check the status (ready when STATUS becomes healthy)
 docker compose ps
 docker compose logs -f svngo
 ```
 
-80번 포트를 이미 쓰고 있으면 `.env`에서 `SVNGO_HTTP_PUBLISH=8081`처럼 바꿉니다.
+If port 80 is already in use, change it in `.env`, e.g. `SVNGO_HTTP_PUBLISH=8081`.
 
-### 접속 URL
+### URLs
 
-| 용도 | URL |
+| Purpose | URL |
 |---|---|
-| 웹 관리 UI | `http://localhost/admin/` (`http://localhost/` 로 접속하면 자동 이동) |
-| SVN 저장소 | `http://localhost/svn/<저장소명>` |
-| 헬스체크 | `http://localhost/admin/healthz` |
-| HTTPS (인증서 설정 시) | `https://<서버>/admin/`, `https://<서버>/svn/<저장소명>` |
+| Web admin UI | `http://localhost/admin/` (`http://localhost/` redirects there) |
+| SVN repository | `http://localhost/svn/<repository>` |
+| Health check | `http://localhost/admin/healthz` |
+| HTTPS (with a certificate) | `https://<server>/admin/`, `https://<server>/svn/<repository>` |
 
-### 초기 관리자 계정
+### Initial admin account
 
-- 컨테이너를 처음 시작할 때 관리자 계정이 없으면 `ADMIN_USERNAME` / `ADMIN_PASSWORD`로 생성합니다(기본 ID `admin`). 비밀번호는 8자 이상이어야 합니다.
-- `ADMIN_PASSWORD`를 비워 두면 임의 비밀번호를 생성해 config 볼륨의 `initial-admin-password` 파일(권한 0600)에 저장합니다. 비밀번호는 로그에 출력하지 않습니다.
+- On first start, if there is no admin account, one is created from `ADMIN_USERNAME` / `ADMIN_PASSWORD` (default ID `admin`). The password must be at least 8 characters.
+- If `ADMIN_PASSWORD` is empty, a random password is generated and saved to the `initial-admin-password` file (mode 0600) in the config volume. The password is never written to the logs.
 
   ```powershell
   docker compose exec svngo cat /data/config/initial-admin-password
-  # 로그인하고 비밀번호를 변경한 뒤 파일 삭제
+  # after signing in and changing the password, delete the file
   docker compose exec svngo rm /data/config/initial-admin-password
   ```
 
-- 관리자 계정을 만든 뒤에는 `ADMIN_PASSWORD`를 바꿔도 적용되지 않습니다. 비밀번호를 잊었다면 다음 명령으로 재설정합니다(없는 ID면 새로 만듭니다).
+- Once the admin account exists, changing `ADMIN_PASSWORD` has no effect. If you forget the password, reset it with the following command (the account is created if the ID does not exist).
 
   ```powershell
   "New-Admin-Pass-123" | docker compose exec -T svngo svngo admin-passwd admin
   ```
 
-### SVN 사용 예
+### Using SVN
 
-웹 UI에서 저장소와 사용자를 만들고 권한을 부여한 다음 사용합니다.
+Create a repository and a user in the web UI, grant permissions, then:
 
 ```powershell
 svn checkout http://localhost/svn/myrepo/trunk myrepo --username kim
 cd myrepo
 "hello" | Out-File -Encoding utf8 readme.txt
 svn add readme.txt
-svn commit -m "첫 커밋"
+svn commit -m "first commit"
 svn update
 ```
 
-TortoiseSVN에서는 저장소 URL에 `http://localhost/svn/myrepo`를 입력합니다.
+In TortoiseSVN, enter `http://localhost/svn/myrepo` as the repository URL.
 
-## 환경 변수
+## Environment variables
 
-| 변수 | 기본값 | 설명 |
+| Variable | Default | Description |
 |---|---|---|
-| `ADMIN_USERNAME` | `admin` | 초기 관리자 ID |
-| `ADMIN_PASSWORD` / `ADMIN_PASSWORD_FILE` | (없음) | 초기 관리자 비밀번호(8자 이상, 파일 지정 가능, Docker secret 용) |
-| `SVNGO_HTTP_PUBLISH` / `SVNGO_HTTPS_PUBLISH` | `80` / `443` | 호스트에 공개할 포트(compose) |
+| `ADMIN_USERNAME` | `admin` | Initial admin ID |
+| `ADMIN_PASSWORD` / `ADMIN_PASSWORD_FILE` | (none) | Initial admin password (8+ characters; can be read from a file, for Docker secrets) |
+| `SVNGO_HTTP_PUBLISH` / `SVNGO_HTTPS_PUBLISH` | `80` / `443` | Host ports to publish (compose) |
 | `SVNGO_SERVER_NAME` | `localhost` | Apache ServerName |
-| `SVNGO_COOKIE_SECURE` | `auto` | 세션 쿠키 Secure 속성: `auto`(HTTPS 또는 `X-Forwarded-Proto: https`), `always`, `never` |
-| `SVNGO_BCRYPT_COST` | `8` | SVN 사용자 bcrypt cost(5–14). Apache가 SVN 요청마다 검증하므로 너무 높이면 느려집니다. 웹 관리자는 12로 고정입니다. |
-| `SVNGO_SESSION_HOURS` | `12` | 웹 세션 유효 시간 |
-| `SVNGO_SVN_MAX_BODY_MB` | `1024` | SVN 요청 하나의 최대 본문 크기(MB, 0=무제한, 최대 2047). 커밋은 파일마다 PUT 요청을 하나씩 보내므로 사실상 파일 하나의 최대 크기입니다. 넘으면 413으로 거부합니다. |
-| `SVNGO_SVN_MAX_XML_MB` | `64` | SVN XML 요청(REPORT/PROPFIND/MERGE)의 최대 크기(MB, 0=무제한) |
-| `SVNGO_SVNAUTHZ` | 자동 탐색 | authz 검증 도구 경로(`svngo-authz` 또는 `svnauthz`). 없거나 자체 점검에 실패하면 시작하지 않습니다. |
-| `SVNGO_TLS_CERT` / `SVNGO_TLS_KEY` | `/data/config/tls/server.crt` / `.key` | 이 파일들이 있으면 8443 포트에서 HTTPS를 켭니다. |
-| `TZ` | `Asia/Seoul` | 표시 시간대 |
+| `SVNGO_COOKIE_SECURE` | `auto` | Secure attribute of the session cookie: `auto` (HTTPS or `X-Forwarded-Proto: https`), `always`, `never` |
+| `SVNGO_BCRYPT_COST` | `8` | bcrypt cost for SVN users (5–14). Apache verifies it on every SVN request, so high values slow SVN down. Web admins always use 12. |
+| `SVNGO_SESSION_HOURS` | `12` | Web session lifetime |
+| `SVNGO_SVN_MAX_BODY_MB` | `1024` | Maximum body size of one SVN request (MB, 0 = unlimited, max 2047). A commit sends one PUT request per file, so this is effectively the maximum file size. Larger requests are rejected with 413. |
+| `SVNGO_SVN_MAX_XML_MB` | `64` | Maximum size of SVN XML requests (REPORT/PROPFIND/MERGE) (MB, 0 = unlimited) |
+| `SVNGO_ADMIN_ALLOW_IPS` | (none) | IPs/CIDRs always allowed to reach the admin UI (`/admin`), separated by commas or spaces. Combined with the list set in the web UI. See [Restricting access by IP](#restricting-access-by-ip) |
+| `SVNGO_SVN_ALLOW_IPS` | (none) | IPs/CIDRs always allowed to reach SVN (`/svn`). The server does not start if the format is invalid. |
+| `SVNGO_SVNAUTHZ` | auto-detected | Path of the authz validator (`svngo-authz` or `svnauthz`). The server does not start if it is missing or fails its self-test. |
+| `SVNGO_TLS_CERT` / `SVNGO_TLS_KEY` | `/data/config/tls/server.crt` / `.key` | HTTPS is enabled on port 8443 when these files exist. |
+| `TZ` | `Asia/Seoul` | Display time zone |
 
-## 컨테이너 보안 옵션
+## Container security options
 
-`docker-compose.yml`에는 다음 보안 옵션이 기본으로 들어 있습니다. 모두 빼도 기능은 똑같이 동작하지만, 그대로 두는 것을 권장합니다.
+`docker-compose.yml` ships with the following security options. Everything works the same without them, but keeping them is recommended.
 
 ```yaml
     read_only: true
@@ -287,39 +293,39 @@ TortoiseSVN에서는 저장소 URL에 `http://localhost/svn/myrepo`를 입력합
       - no-new-privileges:true
 ```
 
-### `read_only: true` (읽기 전용 루트 파일시스템)
+### `read_only: true` (read-only root filesystem)
 
-컨테이너의 루트 파일시스템(이미지 내용)을 읽기 전용으로 마운트합니다. `docker run`에서는 `--read-only`입니다.
+Mounts the container's root filesystem (the image contents) read-only. With `docker run` it is `--read-only`.
 
-- 쓸 수 있는 곳은 명시적으로 마운트한 볼륨과 tmpfs뿐이고, `/usr/local/bin`이나 `/etc` 같은 나머지 경로는 쓰기가 막힙니다.
-- 취약점을 통해 컨테이너 안에서 코드가 실행되더라도 실행 파일이나 Apache 설정을 바꾸거나 파일을 심을 수 없습니다.
-- 데이터가 이미지 계층이 아니라 볼륨에만 쌓이므로, 컨테이너를 다시 만들어도 상태가 섞이지 않습니다.
+- Only explicitly mounted volumes and tmpfs are writable; everything else, such as `/usr/local/bin` or `/etc`, is not.
+- Even if a vulnerability lets code run inside the container, it cannot change executables or the Apache configuration, or plant files.
+- Data accumulates only in volumes, never in the image layer, so recreating the container never mixes old state in.
 
-SvnGo가 쓰기를 하는 경로는 다음과 같습니다.
+SvnGo writes to these paths:
 
-| 경로 | 종류 | 용도 |
+| Path | Type | Purpose |
 |---|---|---|
-| `/data/repos`, `/data/config`, `/data/db`, `/data/backups` | 볼륨 또는 바인드 마운트 | 저장소, htpasswd·authz, SQLite DB, 백업 (영구 보관) |
-| `/run/svngo` | tmpfs (메모리) | Apache PID 파일과 SSL 세션 캐시, SVN 로그인 차단 목록, svn 클라이언트 설정, authz 자체 점검용 임시 파일 |
-| `/tmp` | tmpfs (메모리) | SQLite와 라이브러리가 쓰는 임시 파일 |
+| `/data/repos`, `/data/config`, `/data/db`, `/data/backups` | Volume or bind mount | Repositories, htpasswd and authz, SQLite DB, backups (persistent) |
+| `/run/svngo` | tmpfs (memory) | Apache PID file and SSL session cache, SVN login block list, svn client config, temporary files for the authz self-test |
+| `/tmp` | tmpfs (memory) | Temporary files of SQLite and libraries |
 
-- `read_only: true`를 쓸 때는 `tmpfs:` 두 항목이 반드시 함께 있어야 합니다. 없으면 Apache가 PID 파일을 만들지 못해 시작에 실패합니다.
-- `/run/svngo`는 컨테이너 사용자(uid/gid 1000)가 쓸 수 있도록 `uid=1000,gid=1000`을 지정합니다. 이미지를 다른 UID로 빌드했다면 이 값도 맞춰 바꾸세요.
-- tmpfs는 메모리에 있어 재시작하면 지워지지만, 여기에는 시작할 때 다시 만드는 데이터만 들어갑니다. SVN 로그인 차단 목록이 재시작 후 초기화되는 이유도 이 때문입니다.
-- `read_only: false`로 바꿔도 기능은 같고, 보호 장치 하나가 빠질 뿐입니다. `디렉터리 쓰기 권한 없음` 오류는 이 옵션과 관계없는 볼륨 소유권 문제입니다([시놀로지 안내](#1-데이터-폴더-준비-필수) 참고).
+- With `read_only: true`, both `tmpfs:` entries are required. Without them Apache cannot create its PID file and fails to start.
+- `/run/svngo` gets `uid=1000,gid=1000` so the container user (uid/gid 1000) can write to it. If you build the image with a different UID, change these values too.
+- tmpfs lives in memory and is cleared on restart, but it only holds data that is recreated at startup. That is also why the SVN login block list resets after a restart.
+- `read_only: false` works the same; it just removes one layer of protection. The `directory ... is not writable` error is a volume ownership problem unrelated to this option (see the [Synology notes](#1-prepare-the-data-folders-required)).
 
-### 그 밖의 옵션
+### Other options
 
-| 옵션 | 설명 |
+| Option | Description |
 |---|---|
-| `cap_drop: ALL` | 리눅스 커널 권한(capability)을 모두 제거합니다. 1024 미만 포트를 열지 않고 non-root로 실행하므로 필요한 권한이 없습니다. 대신 컨테이너 안에서 파일 소유자를 바꿀 수 없어, 바인드 마운트 폴더는 호스트에서 소유권을 맞춰야 합니다. |
-| `no-new-privileges:true` | setuid 실행 파일 등으로 권한이 올라가는 것을 막습니다. 일부 Linux 호스트에서 문제가 생기면 [제한 사항](#제한-사항)을 참고하세요. |
+| `cap_drop: ALL` | Drops all Linux kernel capabilities. SvnGo runs as non-root and does not open ports below 1024, so it needs none. As a consequence, file ownership cannot be changed inside the container, so set the ownership of bind-mounted folders on the host. |
+| `no-new-privileges:true` | Prevents privilege escalation through setuid executables and the like. If it causes problems on some Linux hosts, see [Limitations](#limitations). |
 
-## HTTPS 설정
+## HTTPS
 
-**방법 1: 컨테이너에서 직접 처리**
+**Option 1: terminate TLS in the container**
 
-PEM 형식의 인증서와 키를 config 볼륨의 `tls/` 아래에 컨테이너 사용자 소유로 저장한 뒤 재시작합니다.
+Store a PEM certificate and key under `tls/` in the config volume, owned by the container user, then restart.
 
 ```powershell
 docker compose exec svngo mkdir -p /data/config/tls
@@ -329,33 +335,33 @@ docker compose restart svngo
 docker compose logs svngo | Select-String "tls=true"
 ```
 
-또는 compose 파일에 바인드 마운트 `- ./tls:/data/config/tls:ro`를 추가해도 됩니다. 이때 키 파일은 컨테이너 사용자(uid 1000)가 읽을 수 있어야 합니다.
+You can also add the bind mount `- ./tls:/data/config/tls:ro` to the compose file. The key file must then be readable by the container user (uid 1000).
 
-HTTPS가 켜지면 HSTS 헤더와 Secure 쿠키가 자동으로 적용됩니다.
+When HTTPS is on, the HSTS header and Secure cookies are applied automatically.
 
-**방법 2: 외부 리버스 프록시**
+**Option 2: external reverse proxy**
 
-Nginx, Traefik, Caddy 같은 프록시에서 TLS를 종료하고 `http://<컨테이너>:8080`으로 전달합니다. 프록시가 `X-Forwarded-Proto: https`를 보내면 Secure 쿠키가 적용됩니다. 쿠키를 항상 Secure로 하려면 `SVNGO_COOKIE_SECURE=always`를 지정하세요.
+Terminate TLS in a proxy such as Nginx, Traefik or Caddy and forward to `http://<container>:8080`. Secure cookies are used when the proxy sends `X-Forwarded-Proto: https`. To always use Secure cookies, set `SVNGO_COOKIE_SECURE=always`.
 
-## 시놀로지(Synology) NAS에서 실행하기
+## Running on a Synology NAS
 
-DSM 7.2 이상의 **Container Manager** 기준입니다. 배포 이미지(`isul/svngo`)는 linux/amd64 전용이라 Intel/AMD CPU 모델에서 실행됩니다. ARM CPU 모델은 [멀티 아키텍처 빌드](#멀티-아키텍처-빌드)로 arm64 이미지를 직접 만들어 사용하세요.
+This targets **Container Manager** on DSM 7.2 or later. The published image (`isul/svngo`) is linux/amd64 only, so it runs on Intel/AMD models. On ARM models, build an arm64 image yourself with a [multi-architecture build](#multi-architecture-build).
 
-### 1. 데이터 폴더 준비 (필수)
+### 1. Prepare the data folders (required)
 
-컨테이너는 uid/gid 1000으로 실행되고 `cap_drop: ALL`이라 컨테이너 안에서는 폴더 권한을 바꿀 수 없습니다. DSM 공유 폴더는 소유자가 DSM 사용자(uid 1026 이상)이고 ACL이 걸려 있으며, 없는 폴더를 마운트하면 Docker가 root 소유로 만듭니다. 그대로 마운트하면 다음 오류로 시작하지 않습니다.
+The container runs as uid/gid 1000 with `cap_drop: ALL`, so it cannot change folder permissions itself. DSM shared folders are owned by DSM users (uid 1026 and up) and carry ACLs, and Docker creates missing mount folders as root. Mounted as is, the server refuses to start with:
 
 ```
-오류: 디렉터리 쓰기 권한 없음 /data/repos (볼륨 소유권을 확인하세요): open /data/repos/.svngo-write-test: permission denied
+error: directory /data/repos is not writable (check the volume ownership): open /data/repos/.svngo-write-test: permission denied
 ```
 
-**제어판 → 터미널 및 SNMP**에서 SSH를 켜고 Windows PowerShell에서 NAS에 접속합니다.
+Enable SSH in **Control Panel → Terminal & SNMP** and connect to the NAS from Windows PowerShell.
 
 ```powershell
-ssh <DSM관리자계정>@<NAS주소>
+ssh <dsm-admin-account>@<nas-address>
 ```
 
-NAS 셸에서 네 폴더를 만들고 ACL을 제거한 뒤 소유자를 uid/gid 1000으로 바꿉니다. `BASE`는 환경에 맞게 바꾸세요. 이미 데이터가 있는 폴더에도 그대로 실행할 수 있습니다.
+In the NAS shell, create the four folders, remove their ACLs and change the owner to uid/gid 1000. Adjust `BASE` to your setup. It is safe to run on folders that already contain data.
 
 ```bash
 BASE=/volume1/docker/svngo
@@ -365,14 +371,14 @@ for d in repos config db backups; do
   sudo chown -R 1000:1000 "$BASE/$d"
   sudo chmod -R u+rwX,g+rX,o-rwx "$BASE/$d"
 done
-ls -ln "$BASE"   # 네 폴더 모두 소유자가 1000 1000 이면 정상
+ls -ln "$BASE"   # OK when all four folders are owned by 1000 1000
 ```
 
-저장소를 다른 공유 폴더(예: `/volume2/DEV/svn`)에 두려면 그 폴더에도 같은 명령을 실행합니다. 공유 폴더 전체가 아니라 SvnGo 전용 하위 폴더에만 적용하세요.
+To keep repositories in another shared folder (e.g. `/volume2/DEV/svn`), run the same commands on that folder. Apply them only to a subfolder dedicated to SvnGo, not to the whole shared folder.
 
-### 2. 프로젝트 만들기
+### 2. Create the project
 
-**Container Manager → 프로젝트 → 생성**에서 프로젝트 이름(`svngo`)과 경로(`/volume1/docker/svngo`)를 지정하고, 원본으로 **docker-compose.yml 만들기**를 선택해 다음 내용을 붙여 넣습니다. DSM이 80/443 포트를 사용하므로 다른 호스트 포트를 씁니다.
+In **Container Manager → Project → Create**, set the project name (`svngo`) and path (`/volume1/docker/svngo`), choose **Create docker-compose.yml** as the source and paste the following. DSM uses ports 80/443, so other host ports are used.
 
 ```yaml
 services:
@@ -385,7 +391,7 @@ services:
       - "36901:8443"
     environment:
       ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: Change-Me-123   # 8자 이상, 최초 실행 시에만 사용됩니다
+      ADMIN_PASSWORD: Change-Me-123   # 8+ characters, used only on the first start
       SVNGO_SERVER_NAME: nas.example.com
       TZ: Asia/Seoul
     volumes:
@@ -404,16 +410,16 @@ services:
     stop_grace_period: 30s
 ```
 
-DSM 방화벽을 쓰고 있다면 **제어판 → 보안 → 방화벽**에서 36900, 36901 포트를 허용합니다. 시작 후 다음 주소로 접속합니다.
+If the DSM firewall is on, allow ports 36900 and 36901 in **Control Panel → Security → Firewall**. After it starts, open:
 
-| 용도 | URL |
+| Purpose | URL |
 |---|---|
-| 웹 관리 UI | `http://<NAS주소>:36900/admin/` |
-| SVN 저장소 | `http://<NAS주소>:36900/svn/<저장소명>` |
+| Web admin UI | `http://<nas-address>:36900/admin/` |
+| SVN repository | `http://<nas-address>:36900/svn/<repository>` |
 
-### 3. HTTPS (DSM 인증서 사용)
+### 3. HTTPS (using the DSM certificate)
 
-DSM에 등록된 인증서(Let's Encrypt 등)를 config 폴더의 `tls/`로 복사하면 컨테이너가 36901 포트에서 HTTPS를 켭니다. 아래는 DSM 기본 인증서를 복사하는 예입니다.
+Copy a certificate registered in DSM (Let's Encrypt, etc.) to `tls/` in the config folder and the container enables HTTPS on port 36901. This example copies the DSM default certificate.
 
 ```bash
 ARCHIVE=/usr/syno/etc/certificate/_archive
@@ -427,96 +433,247 @@ sudo chmod 700 "$TLS" && sudo chmod 644 "$TLS/server.crt" && sudo chmod 600 "$TL
 sudo docker restart svngo
 ```
 
-인증서가 갱신되면 다시 복사해야 하므로, 위 명령을 **제어판 → 작업 스케줄러 → 사용자 정의 스크립트**(사용자 `root`, 매주 실행)로 등록해 두면 편합니다. 작업 스케줄러에서는 `sudo` 없이 작성해도 됩니다.
+Certificates must be copied again after they renew, so it is convenient to register the commands above as a **Control Panel → Task Scheduler → User-defined script** (user `root`, weekly). In Task Scheduler you can omit `sudo`.
 
-SVN은 `https://<NAS주소>:36901/svn/<저장소명>`처럼 컨테이너 HTTPS 포트로 직접 접속하는 것을 권장합니다. DSM **역방향 프록시**로 HTTPS를 종료하고 `http://localhost:36900`으로 넘기면 웹 UI, checkout, commit은 동작합니다. 하지만 브랜치·태그 생성(`svn copy`)과 `svn move`는 요청 주소의 scheme(https)과 서버 scheme(http)이 달라 `502 Bad Gateway`(`Destination URI refers to different scheme or port`)로 실패할 수 있습니다.
+For SVN, connect directly to the container's HTTPS port, e.g. `https://<nas-address>:36901/svn/<repository>`. If a DSM **reverse proxy** terminates HTTPS and forwards to `http://localhost:36900`, the web UI, checkout and commit work. However, creating branches and tags (`svn copy`) and `svn move` can fail with `502 Bad Gateway` (`Destination URI refers to different scheme or port`) because the request scheme (https) differs from the server scheme (http).
 
-### 4. 운영 팁
+### 4. Tips
 
-- Container Manager에서 만든 컨테이너도 SSH에서 `sudo docker` 명령으로 다룰 수 있습니다.
+- Containers created in Container Manager can also be managed with `sudo docker` over SSH.
 
   ```bash
   sudo docker logs -f svngo
   echo 'New-Admin-Pass-123' | sudo docker exec -i svngo svngo admin-passwd admin
   ```
 
-- 저장소 폴더에 생기는 `#recycle`, `@eaDir` 같은 DSM 시스템 폴더는 저장소 스캔에서 자동으로 제외됩니다.
-- Hyper Backup이나 스냅샷으로 백업할 때는 네 폴더(`repos`, `config`, `db`, `backups`)를 함께 포함하세요.
-- 컨테이너 안의 모든 실행 파일이 `operation not permitted`로 실패하면 `security_opt` 항목을 제거하세요.
+- DSM system folders such as `#recycle` and `@eaDir` in the repository folder are skipped by the repository scan.
+- When backing up with Hyper Backup or snapshots, include all four folders (`repos`, `config`, `db`, `backups`).
+- If every executable in the container fails with `operation not permitted`, remove the `security_opt` entry.
 
-## 기존 SVN 서버에서 이전하기
+## Languages
 
-1. **저장소**: 기존 저장소 디렉터리를 repos 볼륨에 복사합니다. 웹 UI의 **시스템 설정 → 저장소 스캔**을 누르면 자동으로 등록됩니다. 시작할 때도 자동으로 스캔합니다.
+The web admin UI ships with English (`en`) and Korean (`ko`). Registering language files (JSON) adds other languages or adjusts the built-in translations without a restart. Server logs, CLI output and startup errors are always in English, regardless of the language settings.
+
+### How the display language is chosen
+
+1. The language a signed-in user picked in **My account → Language** (applies regardless of the browser language)
+2. When signed out, the language picked last (cookie `svngo_lang`, kept for one year)
+3. A language matching the browser setting (`Accept-Language`). Entries are tried in priority (`q`) order, and a regional tag such as `ko-KR` also matches `ko`. Conversely, if the browser asks for `pt` and only `pt-br` is registered, `pt-br` is used.
+4. **System settings → Server settings → Default language** (English initially)
+5. English if none of the above applies
+
+Both web admins and SVN users can pick their own language. Choosing **Automatic (browser language)** goes back to following the browser. If the file of a language picked by a user or set as the default is deleted, that setting is ignored and the next step in the order applies.
+
+### Language file format
+
+A flat JSON file saved as UTF-8. `_meta` holds the language code and name; everything else is `"key": "translation"` pairs.
+
+```json
+{
+  "_meta": { "code": "ja", "name": "日本語" },
+  "nav.repos": "リポジトリ",
+  "pager.total": "合計 {0} 件"
+}
+```
+
+| Item | Rules |
+|---|---|
+| `_meta.code` | Language code: 2–3 lowercase letters, optionally followed by `-` and a 2–8 character region (e.g. `ja`, `fr`, `pt-br`, `zh-tw`). Upper case and `_` are converted to lower case and `-` (`pt_BR` → `pt-br`). |
+| `_meta.name` | Name shown in the language lists. Required, at most 64 characters. Writing it in the language itself is recommended (`日本語`, `Français`). |
+| Keys | Names prefixed by UI area (`nav.*` menus, `repo.*` repositories, `user.*` users, `system.*` system settings, etc.). There are currently 578. Only keys present in the English reference file are used; unknown keys are ignored. |
+| Values | Strings only (no numbers, arrays or objects). Keys can be up to 200 bytes and values up to 4,000 bytes. |
+| `{0}`, `{1}` … | Placeholders replaced at run time with repository names, counts and so on. Keep the numbers and only move them to fit the word order. Some placeholders receive code formatting or links. |
+
+- Translations are never interpreted as HTML; they are always escaped. Tags such as `<b>` appear literally.
+- Partial translations are fine. Untranslated keys are shown in English.
+- **File names**: a file placed in the folder must be named `<code>.json`, and if it has `_meta.code`, it must match the file name. On upload, `_meta.code` takes precedence; without it the file name is used (`ja.json` → `ja`). Uploaded files are saved as `<code>.json` with sorted keys.
+
+### Creating a new language file
+
+Start from the English language file, which always contains every key. You can get it in two ways:
+
+- **From a running server** (web admins): in **System settings → Languages**, click **Download** for English (`en`). The file matches that server's version exactly.
+- **Without admin access or a server**: download [`internal/i18n/locales/en.json`](internal/i18n/locales/en.json) from this repository. The Korean file [`ko.json`](internal/i18n/locales/ko.json) is in the same folder if a second reference helps.
+
+  ```powershell
+  Invoke-WebRequest https://raw.githubusercontent.com/isul/svngo/main/internal/i18n/locales/en.json -OutFile ja.json
+  ```
+
+  This is the file of the latest source. If your server is older, keys it does not know are ignored; if it is newer, keys missing from your file are shown in English. Either way the file still works, and the server download is the exact match.
+
+Then:
+
+1. Get the English file as described above.
+2. Rename the file to the new language code (e.g. `ja.json`) and change `code` and `name` in `_meta`. If `_meta.code` stays `en`, uploading the file overrides the English text instead of adding a new language.
+3. Translate the values only. Do not change the keys or placeholders such as `{0}`.
+4. Upload the file in **System settings → Languages** (a web admin does this). The **Coverage** column and the missing count show which keys are left.
+5. Pick the new language in **My account → Language**, or change your browser language, to check it. To make it the default for everyone, choose it in **Server settings → Default language**.
+
+To change only some built-in strings, upload a file with the built-in language code (e.g. `ko.json`) that contains just the keys to change. Keys not in the file keep the built-in translation.
+
+### Registering a language
+
+- **Upload**: upload a `.json` file in **System settings → Languages**. It is validated and applied immediately. A file with the same code is replaced.
+- **Folder**: put the file in the `locales/` folder of the config volume (`/data/config/locales/<code>.json`) and click **Reload**. The folder is also read at startup, and the server creates it at startup if it is missing.
+
+Copying into the Docker volume from PowerShell:
+
+```powershell
+docker compose cp .\ja.json svngo:/data/config/locales/ja.json
+```
+
+With bind mounts, as on Synology, put the file in the host's `config/locales/` folder (e.g. `/volume1/docker/svngo/config/locales/`). The file must be readable by the container user (uid 1000).
+
+### Managing languages
+
+**System settings → Languages** lists every registered language.
+
+| Column | Meaning |
+|---|---|
+| Code | Language code. The default language is marked **default**. |
+| Source | **Built-in**, **File** (added language), **Built-in + file** (built-in translation overridden by a file) |
+| Coverage | Share of English keys that are translated, and the missing count |
+
+- **Download**: a complete file with the current translation, missing keys filled in with English. Use it to continue translating or as a backup.
+- **Delete**: available only for languages registered from a file. An added language disappears from the list; deleting an override file brings back the built-in translation. Built-in languages themselves cannot be deleted.
+- Uploads and deletions are recorded in the audit log.
+
+### Troubleshooting
+
+An uploaded file with problems is not registered, and the reason is shown on screen. A problematic file in the folder is skipped on its own: it is shown as a warning in **System settings → Languages** and logged as `language file skipped`. All other languages keep working.
+
+| Error | Cause and fix |
+|---|---|
+| Invalid JSON | Check commas, quotes and braces. The file must be UTF-8. |
+| _meta.code (language code) is required | There is no `_meta.code` and no code could be taken from the file name. Add `_meta.code`. |
+| Invalid language code "…" | Fix the code to follow the rules (`ja`, `pt-br` format). |
+| _meta.code (…) does not match the file name (…) | Make the file name in the folder match `_meta.code`. |
+| invalid language code in the file name | Rename the file in the folder to `<code>.json`. |
+| _meta.name (language name) is required and must be at most 64 characters | Add `_meta.name`. |
+| The value of "…" must be a string | Make the value of that key a quoted string. |
+| The language file is too large / Too many keys / Too many languages | One of the limits below was exceeded. |
+
+### Limits and upgrades
+
+- Up to 512 KB per file, 5,000 keys and 50 languages (including the built-in ones).
+- When a new version adds UI strings, keys missing from existing language files are shown in English. After upgrading, check the coverage in the language list; downloading the language again gives you a file with the new keys filled in with English, so you only need to translate those and upload it again.
+- The built-in language files are in `internal/i18n/locales/` in the source. A new key must be added to both `en.json` and `ko.json`; a test checks that both files have the same keys and placeholders.
+
+## Restricting access by IP
+
+You can set which client IPs may reach the admin UI and SVN, separately.
+
+| List | Scope | Blocked by | Takes effect |
+|---|---|---|---|
+| Admin UI | All of `/admin` (web sign-in of both web admins and SVN users) | Go admin server, 403 page | Immediately on save |
+| SVN | `/svn` (svn clients: checkout, commit, etc.) | Apache, 403 **before authentication** | Immediately on save (Apache graceful restart) |
+
+**Configuration**
+
+- **Web UI**: enter each list in **System settings → Access restriction (allowed IPs)** and save. No restart is needed.
+- **Environment variables**: entries in `SVNGO_ADMIN_ALLOW_IPS` and `SVNGO_SVN_ALLOW_IPS` are **combined** with the web UI lists and always allowed. They cannot be changed in the web UI and are shown read-only. Putting the admin PC or the office network here is recommended so you cannot lock yourself out by mistake. Changing them requires recreating the container.
+
+```powershell
+# .env (docker compose)
+SVNGO_ADMIN_ALLOW_IPS=192.168.10.0/24
+SVNGO_SVN_ALLOW_IPS=192.168.0.0/16,10.8.0.0/24
+```
+
+**Rules**
+
+- Entries are IPv4/IPv6 addresses or CIDR ranges (`192.168.0.10`, `192.168.0.0/24`, `2001:db8::/48`), separated by newlines, commas or spaces. Text after `#` is a comment. Each list holds up to 200 entries.
+- When both the environment variable and the web UI list are **empty, nothing is restricted** (the default).
+- Loopback (`127.0.0.1`, `::1`) is always allowed so the container health check and checks run with `docker compose exec` are never blocked.
+- Saving the admin UI list is refused if your current IP is not in it (to prevent locking yourself out). The page shows **Your current IP**.
+- The SVN list is applied only if the Apache configuration test (`httpd -t`) passes. On failure, the previous list and Apache state are kept. It is a graceful restart, so checkouts and commits in progress are not interrupted and the Apache PID does not change.
+- Changes are recorded in the audit log (`Access restriction changed`).
+
+**Recovering from a lockout**
+
+Clear the lists set in the web UI (the environment variable lists stay). The admin UI recovers immediately and SVN within 20 seconds.
+
+```powershell
+docker compose exec svngo svngo access-reset admin   # admin UI list only
+docker compose exec svngo svngo access-reset svn     # SVN list only
+docker compose exec svngo svngo access-reset all     # both
+```
+
+**Note**: the client IP is the connection address Apache sees. Behind Docker Desktop (Windows/macOS), NAT or a reverse proxy, all clients may appear with the same address (e.g. `172.17.0.1` or the proxy IP). If **Your current IP** differs from your PC's real address, IP restrictions cannot tell clients apart; restrict access in the host firewall or the proxy instead.
+
+## Migrating from an existing SVN server
+
+1. **Repositories**: copy the existing repository directories into the repos volume. When **System settings** in the web UI warns about unregistered repositories, click **Register**. They are also scanned and registered at startup.
    ```powershell
    docker compose cp .\old-repos\myrepo svngo:/data/repos/myrepo
    ```
-   또는 `svnadmin dump` 파일을 **백업** 화면에서 업로드한 뒤 새 저장소로 복원합니다(.svndump / .svndump.gz).
-2. **사용자**: **사용자 → htpasswd 가져오기**에 기존 htpasswd 내용을 붙여 넣거나 파일을 업로드합니다. bcrypt와 APR1-MD5(`$apr1$`) 해시를 지원합니다. APR1 사용자는 SVN에 그대로 접속할 수 있고, 웹에 한 번 로그인하면 bcrypt로 자동 전환됩니다. SHA1/crypt/평문 항목은 보안상 가져오지 않습니다.
-3. **권한**: 웹 UI에서 그룹과 권한 규칙을 다시 설정합니다. `authz` 파일은 DB에서 자동 생성하므로 직접 수정하지 마세요. 직접 수정한 내용은 다음 변경 때 덮어씁니다.
+   Alternatively, upload an `svnadmin dump` file on the **Backups** page and restore it into a new repository (.svndump / .svndump.gz).
+2. **Users**: paste the existing htpasswd contents or upload the file in **Users → Import htpasswd**. bcrypt and APR1-MD5 (`$apr1$`) hashes are supported. APR1 users can keep using SVN as is, and their hash is converted to bcrypt automatically the first time they sign in to the web UI. SHA1, crypt and plain-text entries are not imported for security reasons.
+3. **Permissions**: set up groups and permission rules again in the web UI. The `authz` file is generated from the DB, so do not edit it by hand; manual edits are overwritten by the next change.
 
-## 백업
+## Backups
 
-- 저장소 화면의 **백업**은 `svnadmin dump` 결과를 gzip으로 압축해 backups 볼륨에 저장합니다(`<저장소>-YYYYmmdd-HHMMSS-r<리비전>.svndump.gz`).
-- 복원은 임시 저장소에 load한 뒤 원자적으로 교체하므로, 실패해도 기존 저장소가 손상되지 않습니다.
-- 전체 백업은 네 개의 볼륨(`svn-repos`, `svn-config`, `svn-db`, `svn-backups`)을 함께 보관하면 됩니다.
+- The **Backup** action of a repository compresses the `svnadmin dump` output with gzip and stores it in the backups volume (`<repository>-YYYYmmdd-HHMMSS-r<revision>.svndump.gz`).
+- Restores load into a temporary repository and then swap it in atomically, so a failed restore never damages the existing repository.
+- For a full backup, keep all four volumes (`svn-repos`, `svn-config`, `svn-db`, `svn-backups`) together.
 
-## 보안 설계 요약
+## Security design
 
-- **명령 실행**: 셸 없이 `exec.CommandContext`에 고정 인자로 실행합니다. 경로와 URL은 검증과 이스케이프를 거친 뒤 전달하며, 타임아웃과 출력 크기 제한을 둡니다.
-- **입력 검증**: 저장소/사용자/그룹명은 화이트리스트 정규식으로 검사하고, 저장소 내 경로는 정규화하면서 `..`과 제어 문자를 거부합니다. 파일 접근은 저장소 루트 밖으로 벗어날 수 없습니다.
-- **SQL**: 모든 쿼리를 파라미터 바인딩으로 작성합니다.
-- **XSS**: `html/template` 자동 이스케이프와 엄격한 CSP(`default-src 'self'`, 인라인 스크립트/스타일 금지)를 적용합니다. 외부 CDN은 쓰지 않습니다.
-- **CSRF**: 여러 겹으로 막습니다.
-  - 로그인 후 모든 POST: 세션별 CSRF 토큰(폼 필드 또는 HTMX 헤더)을 검사합니다.
-  - 로그인 폼: double-submit 토큰을 씁니다. HttpOnly·SameSite=Strict 쿠키와 폼 값이 일치해야 하며, HTTPS에서는 `__Host-` 접두사로 하위 도메인의 쿠키 주입을 막습니다.
-  - 전역: Go 표준 `http.CrossOriginProtection`(Sec-Fetch-Site/Origin 기반)이 다른 사이트나 다른 하위 도메인에서 온 POST를 핸들러 실행 전에 차단합니다.
-  - 그 밖에 Origin/Referer 검사와 SameSite=Lax 세션 쿠키를 적용합니다.
-  - 로그아웃하면 페이지를 완전히 새로 고쳐 이전 세션의 토큰이 남지 않게 합니다.
-- **세션**: 쿠키는 HttpOnly와 SameSite로 설정하고 HTTPS에서는 Secure를 붙입니다. DB에는 토큰의 SHA-256 해시만 저장합니다. 비밀번호를 변경하면 해당 사용자의 세션을 폐기합니다.
-- **비밀번호**: bcrypt로만 저장하고 평문은 저장하지 않습니다. 비밀번호와 인증 정보는 로그에 출력하지 않습니다.
-- **로그인 제한**: 웹 로그인은 IP와 계정별로 15분 동안 실패 횟수를 제한합니다(기본 10회, 설정 가능).
-- **SVN 무차별 대입 차단**: SVN(HTTP Basic) 로그인에 15분 안에 20회 실패한 IP는 15분 동안 차단됩니다(횟수와 시간은 시스템 설정에서 변경, 0이면 사용 안 함).
-  - 차단은 Apache가 **인증보다 먼저** 429로 응답하는 방식이라, 차단된 동안에는 비밀번호를 더 시도할 수 없습니다.
-  - Apache를 재시작하지 않고 바로 적용되며, 시스템 설정 화면에서 차단 목록을 보고 해제할 수 있습니다.
-  - 차단과 해제는 감사 로그에 기록됩니다.
-- **요청 크기 제한**: `/svn` 본문과 XML 요청 크기를 제한합니다. 그 밖의 경로는 1MB까지만 받고, 관리 화면은 Go 서버가 기능별로 제한합니다.
-- **authz 검증 강제**: 시작할 때 검증 도구를 자체 점검합니다. 정상 파일은 통과시키고, 잘못된 파일은 거부하고, 권한을 올바르게 평가하는지 확인합니다. 하나라도 실패하면 서버가 시작되지 않으며, 검증 없이 인증 파일을 적용하는 경로는 없습니다.
-- **보안 헤더**: CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP, HSTS(HTTPS)를 보냅니다.
-- **컨테이너**: non-root(uid 1000)로 실행하며 읽기 전용 루트 파일시스템, `cap_drop: ALL`, `no-new-privileges`를 적용합니다. PID 1은 tini입니다.
-- **인증 파일**: 임시 파일에 쓰고 libsvn으로 검증한 뒤 원자적으로 교체하고, 다시 읽어 비교합니다. 실패하면 롤백합니다. **시스템 설정 → 동기화 검증**에서 DB와 파일 내용, libsvn 평가 결과의 일치 여부를 확인할 수 있습니다.
+- **Command execution**: commands run through `exec.CommandContext` with fixed arguments and no shell. Paths and URLs are validated and escaped before being passed, with timeouts and output size limits.
+- **Input validation**: repository, user and group names are checked against allow-list regular expressions. Paths inside repositories are normalized, and `..` and control characters are rejected. File access cannot leave the repository root.
+- **SQL**: every query uses parameter binding.
+- **XSS**: `html/template` auto-escaping and a strict CSP (`default-src 'self'`, no inline scripts or styles). No external CDNs. Translations in uploaded language files are not interpreted as HTML either.
+- **CSRF**: several layers of protection.
+  - Every POST after sign-in: a per-session CSRF token (form field or HTMX header) is checked.
+  - Login form: a double-submit token. An HttpOnly, SameSite=Strict cookie must match the form value, and over HTTPS the `__Host-` prefix prevents cookie injection from subdomains.
+  - Global: Go's standard `http.CrossOriginProtection` (based on Sec-Fetch-Site/Origin) blocks POSTs from other sites or other subdomains before any handler runs.
+  - In addition, Origin/Referer checks and a SameSite=Lax session cookie.
+  - Signing out fully reloads the page so no token of the previous session remains.
+- **Sessions**: cookies are HttpOnly and SameSite, and Secure over HTTPS. Only the SHA-256 hash of the token is stored in the DB. Changing a password revokes that user's sessions.
+- **Passwords**: stored only as bcrypt, never in plain text. Passwords and credentials are never logged.
+- **Login limits**: web sign-in failures are limited per IP and per account over 15 minutes (10 by default, configurable).
+- **SVN brute-force blocking**: an IP with 20 failed SVN (HTTP Basic) logins within 15 minutes is blocked for 15 minutes (count and duration are configurable in system settings; 0 disables it).
+  - Apache answers blocked clients with 429 **before authentication**, so no more passwords can be tried while blocked.
+  - It applies immediately without restarting Apache, and the block list can be viewed and cleared in system settings.
+  - Blocks and unblocks are recorded in the audit log.
+- **IP access restriction**: separate allowed IP/CIDR lists for the admin UI and SVN. Apache rejects SVN requests with 403 before authentication, and the Go server rejects every admin page and sign-in request. If a stored list is corrupt, only loopback is allowed (fail-closed). See [Restricting access by IP](#restricting-access-by-ip).
+- **Request size limits**: `/svn` bodies and XML requests are limited. Other paths accept up to 1 MB, and the admin pages apply per-feature limits in the Go server.
+- **Mandatory authz validation**: at startup the validator is self-tested: it must accept a valid file, reject an invalid one and evaluate permissions correctly. If any check fails the server does not start, and there is no path that applies auth files without validation.
+- **Security headers**: CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP, HSTS (over HTTPS).
+- **Container**: runs as non-root (uid 1000) with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. PID 1 is tini.
+- **Auth files**: written to a temporary file, validated with libsvn, swapped in atomically and read back for comparison, with rollback on failure. **System settings → Auth file sync check** shows whether the DB, the file contents and the libsvn evaluation agree.
 
-## 운영
+## Operations
 
 ```powershell
-docker compose logs -f svngo        # 로그 (Apache 로그는 [apache] 접두사)
-docker compose restart svngo        # 재시작 (데이터는 볼륨에 유지)
-docker compose down                 # 중지 (볼륨 유지)
-docker compose down -v              # 중지 + 데이터 삭제 (주의!)
+docker compose logs -f svngo        # logs (Apache lines are prefixed with [apache])
+docker compose restart svngo        # restart (data stays in the volumes)
+docker compose down                 # stop (volumes kept)
+docker compose down -v              # stop and delete all data (careful!)
 docker compose exec svngo svngo version
 ```
 
-- Go 관리 서버가 Apache를 감독합니다. Apache가 비정상 종료되면 백오프 후 다시 시작하고, 컨테이너 종료 신호(SIGTERM)를 받으면 Apache를 graceful 종료한 뒤 끝냅니다.
-- 헬스체크(`svngo healthcheck`)는 Apache를 거쳐 `/admin/healthz`를 확인하므로 Apache와 Go 서버를 함께 검사합니다.
+- The Go admin server supervises Apache. If Apache exits unexpectedly it is restarted with backoff, and on the container stop signal (SIGTERM) Apache is stopped gracefully before exiting.
+- The health check (`svngo healthcheck`) requests `/admin/healthz` through Apache, so it checks Apache and the Go server together.
 
-### 멀티 아키텍처 빌드
+### Multi-architecture build
 
 ```powershell
-docker buildx build --platform linux/amd64,linux/arm64 -t <레지스트리>/svngo:1.0.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/svngo:1.0.0 --push .
 ```
 
-## 테스트
+## Tests
 
-**단위 및 통합 테스트**
+**Unit and integration tests**
 
-호스트에 `svn`, `svnadmin`, `svnlook`, `svnauthz`가 있으면 실제 SVN 도구로 실행됩니다.
+When `svn`, `svnadmin`, `svnlook` and `svnauthz` are installed on the host, the tests use the real SVN tools.
 
 ```powershell
 go test -count=1 ./...
 ```
 
-**Docker E2E 테스트**
+**Docker E2E tests**
 
-실제 컨테이너에 svn 클라이언트로 HTTP 요청을 보냅니다. 테스트 포트는 18080입니다.
+Sends HTTP requests with the svn client to a real container. The test port is 18080.
 
 ```powershell
 docker compose -p svngo-e2e -f docker-compose.yml -f e2e/compose.e2e.yml up -d --build
@@ -524,56 +681,62 @@ go test -tags e2e -count=1 -v ./e2e
 docker compose -p svngo-e2e -f docker-compose.yml -f e2e/compose.e2e.yml down -v
 ```
 
-E2E는 다음 항목을 실제 `svn` 명령으로 검증합니다.
+The E2E tests verify the following with real `svn` commands:
 
-1. 저장소 생성
-2. 사용자 생성
+1. Create a repository
+2. Create a user
 3. HTTP checkout
 4. HTTP commit
 5. HTTP update
-6. 비밀번호 변경
-7. 기존 비밀번호 거부
-8. 권한 변경(rw→r 후 커밋 거부, 디렉터리 거부, 규칙 삭제, 그룹 권한)
-9. 권한 없는 사용자 차단
-10. Apache 재시작 없이 신규 저장소 접근(PID와 재시작 횟수 비교)
-11. 웹 UI 커밋 이력과 diff
-12. `docker compose restart` 후 데이터 유지
+6. Change a password
+7. Reject the old password
+8. Change permissions (commit rejected after rw→r, directory denied, rule deleted, group permissions)
+9. Block a user without permission
+10. Access a new repository without restarting Apache (PID and restart count compared)
+11. Commit history and diff in the web UI
+12. Data kept after `docker compose restart`
 
-## 디렉터리 구조
+## Directory layout
 
 ```
-cmd/svngo/            진입점 (serve, healthcheck, admin-passwd, version 명령)
+cmd/svngo/            entry point (serve, healthcheck, admin-passwd, access-reset, version commands)
 internal/
-  server/             관리 웹 앱: 핸들러, 세션·CSRF, 작업(백업·복원), DB→인증 파일 동기화
-    templates/        html/template 화면 (한국어, 바이너리에 내장)
-    static/           CSS, htmx(로컬 번들), 소형 JS (바이너리에 내장)
-  apache/             httpd 프로세스 관리, 로그 수집, SVN 무차별 대입 차단
-  svn/                svnadmin·svnlook·svn·authz 검증 도구 실행
-  authz/              권한 정책 평가, htpasswd·authz 파일 생성
-  store/              SQLite 스키마, 감사 로그, 설정값
-  passwd/             bcrypt·APR1 해시, htpasswd 파싱
-  config/             환경 변수 설정
-  validate/           이름·비밀번호·권한 경로 검증
-  repopath/           저장소 내부 경로 처리
-  fsutil/             원자적 파일 쓰기
-  logring/            최근 로그 보관(메모리)
-docker/httpd.conf  Apache 설정 (mod_dav_svn, authz_svn, proxy)
-docker/svngo-authz.c  libsvn 기반 authz 검증 도구 (svnauthz 호환)
-docker/DOCKERHUB.md   Docker Hub 저장소 설명 (isul/svngo Overview)
-Dockerfile         멀티 스테이지 빌드 (Go → C 헬퍼 → alpine 런타임)
-docker-compose.yml 운영용 compose
-e2e/               Docker E2E 테스트
-docs/images/       README 화면 캡처
+  server/             admin web app: handlers, sessions and CSRF, jobs (backup/restore), DB → auth file sync
+    templates/        html/template pages (use translation keys, embedded in the binary)
+    static/           CSS, htmx (bundled locally), small JS (embedded in the binary)
+  i18n/               languages: load, validate and install language files, browser language matching, translated messages
+    locales/          built-in language files en.json and ko.json (embedded in the binary)
+  apache/             httpd process management, log collection, SVN brute-force blocking, SVN allowed-IP rules
+  ipacl/              parsing, normalizing and matching allowed IP/CIDR lists
+  svn/                runs svnadmin, svnlook, svn and the authz validator
+  authz/              permission evaluation, htpasswd and authz file generation
+  store/              SQLite schema, audit log, settings
+  passwd/             bcrypt and APR1 hashes, htpasswd parsing
+  config/             configuration from environment variables
+  validate/           validation of names, passwords and permission paths
+  repopath/           paths inside repositories
+  fsutil/             atomic file writes
+  logring/            recent log buffer (in memory)
+docker/httpd.conf     Apache configuration (mod_dav_svn, authz_svn, proxy)
+docker/svngo-authz.c  libsvn-based authz validator (svnauthz compatible)
+docker/DOCKERHUB.md   Docker Hub repository description (isul/svngo Overview)
+Dockerfile            multi-stage build (Go → C helper → alpine runtime)
+docker-compose.yml    production compose file
+e2e/                  Docker E2E tests
+docs/images/          README screenshots (Korean UI; en/ holds the English UI)
+README.md             this document (English)
+README.ko.md          Korean version of this document
 ```
 
-## 제한 사항
+## Limitations
 
-- `svn://`(svnserve)는 지원하지 않으며 HTTP/HTTPS만 지원합니다.
-- 인증 방식은 htpasswd(Basic 인증)뿐입니다. LDAP/AD 연동은 없습니다.
-- 웹 파일 보기에는 구문 강조가 없습니다. 512KB를 넘는 파일은 일부만 보여 주고, 다운로드는 전체를 제공합니다. diff는 5,000줄 또는 2MB까지 화면에 표시하며 원본 diff는 전체를 다운로드할 수 있습니다.
-- 저장소 크기는 비동기로 계산해 캐시한 값이므로 최신 커밋이 바로 반영되지 않을 수 있습니다.
-- 권한 규칙의 경로에 `[ ] % \` 문자와 앞뒤 공백은 쓸 수 없습니다(authz 문법 제약).
-- 컨테이너 하나 구성이라 수평 확장(다중 인스턴스)은 지원하지 않습니다.
-- SVN 로그인 차단은 클라이언트 IP 기준이며, 차단 목록은 메모리에만 있어 컨테이너를 재시작하면 초기화됩니다.
-  - 일부 Docker Desktop 환경이나 리버스 프록시 뒤처럼 모든 클라이언트가 같은 IP로 보이면, 한 사람의 반복 실패로 모두가 차단될 수 있습니다. 이 경우 시스템 설정에서 허용 횟수를 높이거나 0으로 끄고, 프록시에서 따로 제한하세요.
-- 일부 Linux 호스트(AppArmor 또는 snap Docker)에서는 `no-new-privileges` 설정이 있으면 컨테이너 안의 모든 실행 파일이 `operation not permitted`로 실패할 수 있습니다. 이 경우 `docker-compose.yml`의 `security_opt` 항목을 제거하세요. Docker Desktop(Windows/macOS)에서는 문제없습니다.
+- `svn://` (svnserve) is not supported; only HTTP/HTTPS.
+- Authentication is htpasswd (Basic auth) only. There is no LDAP/AD integration.
+- The web file view has no syntax highlighting. Files over 512 KB are shown partially, and the download always contains the whole file. Diffs are shown up to 5,000 lines or 2 MB, and the full raw diff can be downloaded.
+- Repository sizes are computed asynchronously and cached, so the latest commits may not be reflected right away.
+- Paths in permission rules cannot contain `[ ] % \` or leading/trailing spaces (authz syntax constraint).
+- It is a single-container design, so horizontal scaling (multiple instances) is not supported.
+- SVN login blocking is per client IP, and the block list is kept only in memory, so it resets when the container restarts.
+  - When all clients appear with the same IP, as on some Docker Desktop setups or behind a reverse proxy, repeated failures by one person can block everyone. In that case raise the allowed count or set it to 0 in system settings, and limit attempts in the proxy instead.
+- IP access restriction also uses the connection address Apache sees. `X-Forwarded-For` is not trusted, so behind a reverse proxy the proxy address is evaluated. If `SVNGO_MANAGE_APACHE` is turned off to use an external Apache, the SVN list is saved but not applied.
+- On some Linux hosts (AppArmor or snap Docker), `no-new-privileges` can make every executable in the container fail with `operation not permitted`. In that case remove the `security_opt` entry from `docker-compose.yml`. Docker Desktop (Windows/macOS) is not affected.

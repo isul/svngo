@@ -19,6 +19,7 @@ import (
 	"svngo/internal/apache"
 	"svngo/internal/authz"
 	"svngo/internal/config"
+	"svngo/internal/i18n"
 	"svngo/internal/logring"
 	"svngo/internal/passwd"
 	"svngo/internal/store"
@@ -43,9 +44,11 @@ type App struct {
 
 	limiter  *loginLimiter
 	svnGuard *apache.Guard
+	allow    allowState
 	appLogs  *logring.Ring
 	apLogs   *logring.Ring
 	tmpl     *templates
+	i18n     *i18n.Registry
 
 	ctx    context.Context
 	jobSem chan struct{}
@@ -71,22 +74,29 @@ func New(ctx context.Context, cfg *config.Config, logs *logring.Ring) (*App, err
 		db.Close()
 		return nil, err
 	}
-	tm, err := loadTemplates()
+	if err := os.MkdirAll(cfg.LocalesDir(), 0o750); err != nil {
+		slog.Warn("creating the language file folder failed", "dir", cfg.LocalesDir(), "err", err)
+	}
+	reg := i18n.New(cfg.LocalesDir())
+	for _, e := range reg.LoadErrors() {
+		slog.Warn("language file skipped", "dir", cfg.LocalesDir(), "err", e)
+	}
+	tm, err := loadTemplates(reg)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	a := &App{
 		cfg: cfg, db: db, svn: tools, limiter: newLoginLimiter(),
-		appLogs: logs, apLogs: logring.New(1000), tmpl: tm,
+		appLogs: logs, apLogs: logring.New(1000), tmpl: tm, i18n: reg,
 		ctx: ctx, jobSem: make(chan struct{}, 2), sizing: map[string]bool{}, started: time.Now(),
 	}
 	a.svnGuard, err = apache.NewGuard(cfg.RunDir, a.svnBlockLimits, func(ip string, fails int) {
-		store.Audit(context.Background(), a.db, "system", "svn.block", fmt.Sprintf("%s (실패 %d회)", ip, fails))
+		store.Audit(context.Background(), a.db, "system", "svn.block", fmt.Sprintf("%s (%d failures)", ip, fails))
 	})
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("SVN 차단 목록 초기화 실패: %w", err)
+		return nil, fmt.Errorf("initializing the SVN block list failed: %w", err)
 	}
 	if err := a.init(ctx); err != nil {
 		db.Close()
@@ -112,19 +122,23 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	errc := make(chan error, 1)
 	go func() {
-		slog.Info(AppName+" 관리 서버 시작", "version", Version, "listen", a.cfg.Listen)
+		slog.Info(AppName+" admin server started", "version", Version, "listen", a.cfg.Listen)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
 
 	if a.cfg.ManageApache {
+		if err := a.initSvnAllow(ctx); err != nil {
+			return err
+		}
 		a.apache = apache.New(a.cfg, a.apLogs)
 		a.apache.OnAuthFail = a.svnGuard.Fail
 		if err := a.apache.Check(ctx); err != nil {
 			return err
 		}
 		go a.apache.Run(ctx)
+		go a.svnAllowLoop(ctx)
 	}
 	go a.svnGuard.Run(ctx)
 
@@ -133,7 +147,7 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 	}
-	slog.Info("종료 신호 수신, 종료 중...")
+	slog.Info("shutdown signal received, stopping...")
 	shCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if a.apache != nil {
@@ -141,7 +155,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	srv.Shutdown(shCtx)
 	a.jobsWG.Wait()
-	slog.Info("종료 완료")
+	slog.Info("shutdown complete")
 	return nil
 }
 
@@ -160,8 +174,8 @@ func (a *App) init(ctx context.Context) error {
 	if err := a.ensureAdmin(ctx); err != nil {
 		return err
 	}
-	if _, err := a.db.ExecContext(ctx, `UPDATE jobs SET status='failed', message='서버 재시작으로 중단됨', finished_at=?
-		WHERE status IN ('queued','running')`, store.Now()); err != nil {
+	if _, err := a.db.ExecContext(ctx, `UPDATE jobs SET status='failed', message=?, finished_at=?
+		WHERE status IN ('queued','running')`, i18n.Encode(i18n.M("job.interrupted_restart")), store.Now()); err != nil {
 		return err
 	}
 	a.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at < ?", store.Now())
@@ -170,12 +184,12 @@ func (a *App) init(ctx context.Context) error {
 	if n, err := a.registerRepos(ctx, "system"); err != nil {
 		return err
 	} else if n > 0 {
-		slog.Info("기존 저장소 자동 등록", "count", n)
+		slog.Info("existing repositories registered", "count", n)
 	}
 	// Regenerate files from the DB so a crash between steps can never leave
 	// Apache with stale credentials.
 	if err := a.mutate(ctx, "system", "", "", nil); err != nil {
-		return fmt.Errorf("인증 파일 동기화 실패: %w", err)
+		return fmt.Errorf("auth file synchronization failed: %w", err)
 	}
 	return nil
 }
@@ -210,10 +224,10 @@ func (a *App) ensureAdmin(ctx context.Context) error {
 		if err := os.WriteFile(f, []byte(pw+"\n"), 0o600); err != nil {
 			return err
 		}
-		slog.Warn("ADMIN_PASSWORD 가 설정되지 않아 임의 비밀번호를 생성했습니다. 파일에서 확인 후 삭제하세요",
+		slog.Warn("ADMIN_PASSWORD is not set; a random password was generated. Read it from the file, then delete the file",
 			"user", a.cfg.AdminUser, "file", f)
 	} else {
-		slog.Info("초기 관리자 계정 생성", "user", a.cfg.AdminUser)
+		slog.Info("initial admin account created", "user", a.cfg.AdminUser)
 	}
 	return nil
 }

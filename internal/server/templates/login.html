@@ -1,15 +1,15 @@
 {{define "content"}}
 <div class="auth-card">
   <div class="auth-brand">{{template "logo"}}<h1>{{.App}}</h1></div>
-  <p class="muted center">Subversion 서버 관리</p>
-  {{with .D.Error}}<div class="alert err" role="alert">{{.}}</div>{{end}}
+  <p class="muted center">{{t "login.subtitle"}}</p>
+  {{with .D.Error}}<div class="alert err" role="alert">{{msg .}}</div>{{end}}
   <form method="post" action="/admin/login" class="form" hx-boost="false">
     <input type="hidden" name="_csrf" value="{{.D.CSRF}}">
     <input type="hidden" name="next" value="{{.D.Next}}">
-    <label>아이디<input name="username" value="{{.D.Username}}" autocomplete="username" required autofocus maxlength="64"></label>
-    <label>비밀번호<input name="password" type="password" autocomplete="current-password" required maxlength="72"></label>
-    <button class="btn primary block">로그인</button>
+    <label>{{t "common.username"}}<input name="username" value="{{.D.Username}}" autocomplete="username" required autofocus maxlength="64"></label>
+    <label>{{t "common.password"}}<input name="password" type="password" autocomplete="current-password" required maxlength="72"></label>
+    <button class="btn primary block">{{t "login.submit"}}</button>
   </form>
-  <p class="muted small center">관리자 계정 또는 SVN 사용자 계정으로 로그인할 수 있습니다.<br>SVN 사용자는 권한이 있는 저장소만 조회할 수 있습니다.</p>
+  <p class="muted small center">{{t "login.hint1"}}<br>{{t "login.hint2"}}</p>
 </div>
 {{end}}

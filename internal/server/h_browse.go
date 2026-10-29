@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -12,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"svngo/internal/i18n"
 	"svngo/internal/repopath"
 	"svngo/internal/svn"
 )
@@ -36,7 +36,7 @@ func (a *App) resolveRev(r *http.Request, repo *RepoRow) (int64, error) {
 	}
 	rev, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || rev < 0 || rev > youngest {
-		return 0, errors.New("잘못된 리비전입니다")
+		return 0, i18n.E("browse.err.revision")
 	}
 	return rev, nil
 }
@@ -49,12 +49,12 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request, s *Session) {
 	ctx := r.Context()
 	p, err := repopath.Clean(r.PathValue("path"))
 	if err != nil {
-		a.errorPage(w, r, s, http.StatusBadRequest, err.Error())
+		a.errorPage(w, r, s, http.StatusBadRequest, err)
 		return
 	}
 	rev, err := a.resolveRev(r, repo)
 	if err != nil {
-		a.errorPage(w, r, s, http.StatusBadRequest, err.Error())
+		a.errorPage(w, r, s, http.StatusBadRequest, err)
 		return
 	}
 	pol := a.policy.Load()
@@ -69,10 +69,10 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request, s *Session) {
 			a.notFound(w, r, s)
 			return
 		}
-		a.errorPage(w, r, s, http.StatusInternalServerError, err.Error())
+		a.errorPage(w, r, s, http.StatusInternalServerError, err)
 		return
 	}
-	v := &View{Title: repo.Name + p, Nav: "repos", Tab: "files", Repo: repo, D: map[string]any{
+	v := &View{Title: i18n.Raw(repo.Name + p), Nav: "repos", Tab: "files", Repo: repo, D: map[string]any{
 		"Path": p, "Rev": rev, "Info": info, "Pinned": r.URL.Query().Get("rev") != "",
 		"SvnURL": a.svnBaseURL(r) + "/" + repo.Name + escapeRepoPath(p),
 	}}
@@ -80,7 +80,7 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request, s *Session) {
 	if info.Kind == "dir" {
 		entries, err := a.svn.List(ctx, dir, p, rev)
 		if err != nil {
-			a.errorPage(w, r, s, http.StatusInternalServerError, err.Error())
+			a.errorPage(w, r, s, http.StatusInternalServerError, err)
 			return
 		}
 		visible := entries[:0]
@@ -106,13 +106,13 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request, s *Session) {
 	}
 	size, err := a.svn.FileSize(ctx, dir, p, rev)
 	if err != nil {
-		a.errorPage(w, r, s, http.StatusInternalServerError, err.Error())
+		a.errorPage(w, r, s, http.StatusInternalServerError, err)
 		return
 	}
 	v.D["Size"] = size
 	data, truncated, err := a.svn.CatHead(ctx, dir, p, rev, maxViewBytes)
 	if err != nil {
-		a.errorPage(w, r, s, http.StatusInternalServerError, err.Error())
+		a.errorPage(w, r, s, http.StatusInternalServerError, err)
 		return
 	}
 	head := data[:min(len(data), 8000)]
@@ -151,7 +151,7 @@ func (a *App) handleRaw(w http.ResponseWriter, r *http.Request, s *Session) {
 	}
 	rev, err := a.resolveRev(r, repo)
 	if err != nil {
-		a.errorPage(w, r, s, http.StatusBadRequest, err.Error())
+		a.errorPage(w, r, s, http.StatusBadRequest, err)
 		return
 	}
 	if !s.IsAdmin() && !a.policy.Load().CanRead(repo.Name, p, s.Username) {
@@ -214,7 +214,7 @@ func (a *App) handleCommits(w http.ResponseWriter, r *http.Request, s *Session) 
 	ctx := r.Context()
 	p, err := repopath.Clean(r.URL.Query().Get("path"))
 	if err != nil {
-		a.errorPage(w, r, s, http.StatusBadRequest, err.Error())
+		a.errorPage(w, r, s, http.StatusBadRequest, err)
 		return
 	}
 	if !s.IsAdmin() && !a.policy.Load().Traversable(repo.Name, p, s.Username) {
@@ -224,7 +224,7 @@ func (a *App) handleCommits(w http.ResponseWriter, r *http.Request, s *Session) 
 	dir := a.repoDir(repo.Name)
 	youngest, err := a.svn.Youngest(ctx, dir)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	repo.Youngest = youngest
@@ -237,7 +237,7 @@ func (a *App) handleCommits(w http.ResponseWriter, r *http.Request, s *Session) 
 	limit := a.pageSize(r)
 	entries, err := a.svn.Log(ctx, dir, p, start, limit+1)
 	if err != nil && !svn.IsNotFound(err) {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	var next int64 = -1
@@ -246,7 +246,7 @@ func (a *App) handleCommits(w http.ResponseWriter, r *http.Request, s *Session) 
 		entries = entries[:limit]
 	}
 	entries = a.filterLog(s, repo.Name, entries)
-	a.render(w, r, s, http.StatusOK, "repo_commits", &View{Title: repo.Name + " 커밋", Nav: "repos", Tab: "commits", Repo: repo,
+	a.render(w, r, s, http.StatusOK, "repo_commits", &View{Title: i18n.M("title.repo_commits", repo.Name), Nav: "repos", Tab: "commits", Repo: repo,
 		D: map[string]any{"Log": entries, "Path": p, "Next": next, "Start": start, "PathQ": url.QueryEscape(p)}})
 }
 
@@ -323,7 +323,7 @@ func (a *App) handleCommit(w http.ResponseWriter, r *http.Request, s *Session) {
 	dir := a.repoDir(repo.Name)
 	youngest, err := a.svn.Youngest(ctx, dir)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	repo.Youngest = youngest
@@ -334,12 +334,12 @@ func (a *App) handleCommit(w http.ResponseWriter, r *http.Request, s *Session) {
 	}
 	info, err := a.svn.Info(ctx, dir, rev)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	changes, err := a.svn.Changed(ctx, dir, rev)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	pol := a.policy.Load()
@@ -396,7 +396,7 @@ func (a *App) handleCommit(w http.ResponseWriter, r *http.Request, s *Session) {
 		return true
 	})
 	dp.flush()
-	v := &View{Title: repo.Name + " r" + strconv.FormatInt(rev, 10), Nav: "repos", Tab: "commits", Repo: repo, D: map[string]any{
+	v := &View{Title: i18n.Raw(repo.Name + " r" + strconv.FormatInt(rev, 10)), Nav: "repos", Tab: "commits", Repo: repo, D: map[string]any{
 		"Info": info, "Changes": visible, "HiddenPaths": hidden, "Files": files, "Truncated": truncated,
 	}}
 	if err != nil {
@@ -414,7 +414,7 @@ func (a *App) handleRawDiff(w http.ResponseWriter, r *http.Request, s *Session) 
 	dir := a.repoDir(repo.Name)
 	youngest, err := a.svn.Youngest(ctx, dir)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	rev, err := strconv.ParseInt(r.PathValue("rev"), 10, 64)
@@ -426,7 +426,7 @@ func (a *App) handleRawDiff(w http.ResponseWriter, r *http.Request, s *Session) 
 	readable := func(p string) bool { return s.IsAdmin() || pol.CanRead(repo.Name, p, s.Username) }
 	changes, err := a.svn.Changed(ctx, dir, rev)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	anyReadable := false

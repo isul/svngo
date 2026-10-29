@@ -3,11 +3,11 @@ package server
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"net/http"
 	"strings"
 
 	"svngo/internal/authz"
+	"svngo/internal/i18n"
 	"svngo/internal/store"
 	"svngo/internal/validate"
 )
@@ -45,7 +45,7 @@ func (a *App) handleGroups(w http.ResponseWriter, r *http.Request, s *Session) {
 		FROM groups WHERE name LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' ORDER BY name LIMIT ? OFFSET ?`,
 		like, like, pg.Size, pg.Offset())
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	defer rows.Close()
@@ -56,7 +56,7 @@ func (a *App) handleGroups(w http.ResponseWriter, r *http.Request, s *Session) {
 			groups = append(groups, g)
 		}
 	}
-	a.render(w, r, s, http.StatusOK, "groups", &View{Title: "그룹", Nav: "groups", D: map[string]any{
+	a.render(w, r, s, http.StatusOK, "groups", &View{Title: i18n.M("nav.groups"), Nav: "groups", D: map[string]any{
 		"Groups": groups, "Pager": pg, "Q": q,
 	}})
 }
@@ -70,16 +70,16 @@ func (a *App) handleGroupCreate(w http.ResponseWriter, r *http.Request, s *Sessi
 		err = a.mutate(ctx, s.Username, "group.create", name, func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO groups(name, description, created_at) VALUES(?,?,?)", name, desc, store.Now())
 			if err != nil && strings.Contains(err.Error(), "UNIQUE") {
-				return errors.New("이미 존재하는 그룹입니다")
+				return i18n.E("group.err.exists")
 			}
 			return err
 		})
 	}
 	if err != nil {
-		a.done(w, r, "/admin/groups", "", err)
+		a.done(w, r, "/admin/groups", i18n.Msg{}, err)
 		return
 	}
-	a.done(w, r, "/admin/groups/"+name, "그룹 '"+name+"' 를 생성했습니다.", nil)
+	a.done(w, r, "/admin/groups/"+name, i18n.M("group.created", name), nil)
 }
 
 func (a *App) handleGroupEdit(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -92,7 +92,7 @@ func (a *App) handleGroupEdit(w http.ResponseWriter, r *http.Request, s *Session
 	rows, err := a.db.QueryContext(ctx, `SELECT u.username, u.full_name, u.enabled, (m.user_id IS NOT NULL)
 		FROM users u LEFT JOIN group_members m ON m.user_id=u.id AND m.group_id=? ORDER BY u.username`, g.ID)
 	if err != nil {
-		a.errorPage(w, r, s, 500, err.Error())
+		a.errorPage(w, r, s, 500, err)
 		return
 	}
 	defer rows.Close()
@@ -114,7 +114,7 @@ func (a *App) handleGroupEdit(w http.ResponseWriter, r *http.Request, s *Session
 		}
 	}
 	rules, _ := authz.ListRules(ctx, a.db, "", "@"+g.Name)
-	a.render(w, r, s, http.StatusOK, "group_edit", &View{Title: "@" + g.Name, Nav: "groups", D: map[string]any{
+	a.render(w, r, s, http.StatusOK, "group_edit", &View{Title: i18n.Raw("@" + g.Name), Nav: "groups", D: map[string]any{
 		"Group": g, "Members": members, "Others": others, "Rules": rules,
 	}})
 }
@@ -131,7 +131,7 @@ func (a *App) handleGroupUpdate(w http.ResponseWriter, r *http.Request, s *Sessi
 		_, err := tx.ExecContext(ctx, "UPDATE groups SET description=? WHERE id=?", desc, g.ID)
 		return err
 	})
-	a.done(w, r, "/admin/groups/"+g.Name, "설명을 저장했습니다.", err)
+	a.done(w, r, "/admin/groups/"+g.Name, i18n.M("repo.desc_saved"), err)
 }
 
 func (a *App) handleGroupAddMembers(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -150,7 +150,7 @@ func (a *App) handleGroupAddMembers(w http.ResponseWriter, r *http.Request, s *S
 	}
 	err = func() error {
 		if len(names) == 0 {
-			return errors.New("추가할 사용자를 선택하세요")
+			return i18n.E("group.err.select_users")
 		}
 		for _, n := range names {
 			if err := validate.Username(n); err != nil {
@@ -166,7 +166,7 @@ func (a *App) handleGroupAddMembers(w http.ResponseWriter, r *http.Request, s *S
 				if c, _ := res.RowsAffected(); c == 0 {
 					var x int
 					if tx.QueryRowContext(ctx, "SELECT 1 FROM users WHERE username=?", n).Scan(&x) != nil {
-						return errors.New("사용자를 찾을 수 없습니다: " + n)
+						return i18n.E("user.err.not_found", n)
 					}
 				}
 			}
@@ -177,7 +177,7 @@ func (a *App) handleGroupAddMembers(w http.ResponseWriter, r *http.Request, s *S
 		}
 		return a.verifyGroupRules(ctx, g.Name, names)
 	}()
-	a.done(w, r, "/admin/groups/"+g.Name, "구성원을 추가했습니다.", err)
+	a.done(w, r, "/admin/groups/"+g.Name, i18n.M("group.members_added"), err)
 }
 
 func (a *App) handleGroupRemoveMember(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -198,7 +198,7 @@ func (a *App) handleGroupRemoveMember(w http.ResponseWriter, r *http.Request, s 
 	if err == nil {
 		err = a.verifyGroupRules(ctx, g.Name, []string{user})
 	}
-	a.done(w, r, "/admin/groups/"+g.Name, "구성원 '"+user+"' 를 제외했습니다.", err)
+	a.done(w, r, "/admin/groups/"+g.Name, i18n.M("group.member_removed", user), err)
 }
 
 // verifyGroupRules checks the group's rules for the given users with libsvn.
@@ -236,8 +236,8 @@ func (a *App) handleGroupDelete(w http.ResponseWriter, r *http.Request, s *Sessi
 		return err
 	})
 	if err != nil {
-		a.done(w, r, "/admin/groups/"+g.Name, "", err)
+		a.done(w, r, "/admin/groups/"+g.Name, i18n.Msg{}, err)
 		return
 	}
-	a.done(w, r, "/admin/groups", "그룹 '"+g.Name+"' 와 관련 권한 규칙을 삭제했습니다.", nil)
+	a.done(w, r, "/admin/groups", i18n.M("group.deleted", g.Name), nil)
 }

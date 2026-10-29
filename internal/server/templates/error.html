@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="box error-box">
   <h1>{{.D.Status}}</h1>
-  <p>{{.D.Message}}</p>
-  <p><a class="btn" href="/admin/">처음으로</a></p>
+  <p>{{msg .D.Message}}</p>
+  <p><a class="btn" href="/admin/">{{t "error.home"}}</a></p>
 </div>
 {{end}}

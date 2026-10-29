@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"maps"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"svngo/internal/authz"
 	"svngo/internal/fsutil"
+	"svngo/internal/i18n"
 	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/svn"
@@ -33,7 +33,7 @@ func (a *App) mutate(ctx context.Context, actor, action, detail string, fn func(
 
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("DB 트랜잭션 시작 실패: %w", err)
+		return i18n.Wrap(err, "sync.err.tx")
 	}
 	defer tx.Rollback()
 
@@ -44,7 +44,7 @@ func (a *App) mutate(ctx context.Context, actor, action, detail string, fn func(
 	}
 	pol, err := authz.Load(ctx, tx)
 	if err != nil {
-		return fmt.Errorf("권한 정보 로드 실패: %w", err)
+		return i18n.Wrap(err, "sync.err.load")
 	}
 	if action != "" {
 		if err := store.Audit(ctx, tx, actor, action, detail); err != nil {
@@ -57,13 +57,13 @@ func (a *App) mutate(ctx context.Context, actor, action, detail string, fn func(
 	}
 	if err := tx.Commit(); err != nil {
 		if rerr := restore(); rerr != nil {
-			slog.Error("인증 파일 원복 실패", "err", rerr)
+			slog.Error("restoring auth files failed", "err", rerr)
 		}
-		return fmt.Errorf("DB 저장 실패 (인증 파일은 이전 상태로 복원됨): %w", err)
+		return i18n.Wrap(err, "sync.err.commit")
 	}
 	a.policy.Store(pol)
 	if action != "" {
-		slog.Info("변경 적용", "actor", actor, "action", action, "detail", validate.Clip(detail, 200))
+		slog.Info("change applied", "actor", actor, "action", action, "detail", validate.Clip(detail, 200))
 	}
 	return nil
 }
@@ -75,10 +75,10 @@ func (a *App) writeAuthFiles(ctx context.Context, htp, authzData []byte) (func()
 	prevHtp, errH := os.ReadFile(htpFile)
 	prevAuthz, errA := os.ReadFile(authzFile)
 	if errH != nil && !errors.Is(errH, os.ErrNotExist) {
-		return nil, fmt.Errorf("htpasswd 읽기 실패: %w", errH)
+		return nil, i18n.Wrap(errH, "sync.err.read_htpasswd")
 	}
 	if errA != nil && !errors.Is(errA, os.ErrNotExist) {
-		return nil, fmt.Errorf("authz 읽기 실패: %w", errA)
+		return nil, i18n.Wrap(errA, "sync.err.read_authz")
 	}
 	restore := func() error {
 		e1 := fsutil.AtomicWrite(htpFile, prevHtp)
@@ -91,17 +91,17 @@ func (a *App) writeAuthFiles(ctx context.Context, htp, authzData []byte) (func()
 	}
 	tmpAuthz, err := fsutil.WriteTemp(filepath.Dir(authzFile), ".authz-*.tmp", authzData)
 	if err != nil {
-		return nil, fmt.Errorf("authz 임시 파일 기록 실패: %w", err)
+		return nil, i18n.Wrap(err, "sync.err.write_temp")
 	}
 	defer os.Remove(tmpAuthz)
 	if err := a.svn.ValidateAuthz(ctx, tmpAuthz); err != nil {
-		return nil, fmt.Errorf("authz 검증 실패 (적용하지 않음): %w", err)
+		return nil, i18n.Wrap(err, "sync.err.authz_invalid")
 	}
 
 	changed := false
 	if errH != nil || !bytes.Equal(prevHtp, htp) {
 		if err := fsutil.AtomicWrite(htpFile, htp); err != nil {
-			return nil, fmt.Errorf("htpasswd 기록 실패: %w", err)
+			return nil, i18n.Wrap(err, "sync.err.write_htpasswd")
 		}
 		changed = true
 	}
@@ -110,7 +110,7 @@ func (a *App) writeAuthFiles(ctx context.Context, htp, authzData []byte) (func()
 			if changed {
 				fsutil.AtomicWrite(htpFile, prevHtp)
 			}
-			return nil, fmt.Errorf("authz 교체 실패: %w", err)
+			return nil, i18n.Wrap(err, "sync.err.replace_authz")
 		}
 		fsutil.SyncDir(filepath.Dir(authzFile))
 	}
@@ -120,7 +120,7 @@ func (a *App) writeAuthFiles(ctx context.Context, htp, authzData []byte) (func()
 	gotA, err2 := os.ReadFile(authzFile)
 	if err1 != nil || err2 != nil || !bytes.Equal(gotH, htp) || !bytes.Equal(gotA, authzData) {
 		restore()
-		return nil, errors.New("인증 파일 기록 후 검증 불일치 (이전 상태로 복원됨)")
+		return nil, i18n.E("sync.err.readback")
 	}
 	return restore, nil
 }
@@ -132,7 +132,7 @@ func checkHtpasswd(b []byte) error {
 		}
 		u, h, ok := strings.Cut(line, ":")
 		if !ok || validate.Username(u) != nil || !passwd.ValidStoredHash(h) {
-			return fmt.Errorf("htpasswd 생성 결과 검증 실패 (%d행)", i+1)
+			return i18n.E("sync.err.htpasswd_line", i+1)
 		}
 	}
 	return nil
@@ -148,7 +148,7 @@ type SyncReport struct {
 	MissingDirs  []string
 	Unregistered []string
 	AccessChecks int
-	AccessErrs   []string
+	AccessErrs   []i18n.Msg
 }
 
 func (r SyncReport) OK() bool {
@@ -192,11 +192,11 @@ func (a *App) checkSync(ctx context.Context) (SyncReport, error) {
 					want := pol.Access(repo, path, u)
 					got, err := a.svn.AccessOf(ctx, a.cfg.AuthzFile(), repo, path, u)
 					if err != nil {
-						rep.AccessErrs = append(rep.AccessErrs, err.Error())
+						rep.AccessErrs = append(rep.AccessErrs, i18n.FromErr(err))
 						break outer
 					}
 					if got != want {
-						rep.AccessErrs = append(rep.AccessErrs, fmt.Sprintf("%s:%s %s 예상=%s 실제=%s", repo, path, u, want, got))
+						rep.AccessErrs = append(rep.AccessErrs, i18n.M("sync.access_diff", repo, path, u, want, got))
 					}
 				}
 			}
@@ -214,10 +214,10 @@ func (a *App) verifyAccess(ctx context.Context, repo, path string, users []strin
 		want := pol.Access(repo, path, u)
 		got, err := a.svn.AccessOf(ctx, a.cfg.AuthzFile(), repo, path, u)
 		if err != nil {
-			return fmt.Errorf("권한 검증 실행 실패: %w", err)
+			return i18n.Wrap(err, "sync.err.access_run")
 		}
 		if got != want {
-			return fmt.Errorf("권한 검증 불일치: %s 의 %s:%s 권한 예상=%s, SVN 실제=%s", u, repo, path, want, got)
+			return i18n.E("sync.err.access_mismatch", u, repo, path, want, got)
 		}
 	}
 	return nil

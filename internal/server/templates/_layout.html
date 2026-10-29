@@ -1,10 +1,10 @@
 {{define "layout"}}<!doctype html>
-<html lang="ko">
+<html lang="{{lang}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"refreshOnHistoryMiss":true,"responseHandling":[{"code":"204","swap":false},{"code":"[2345]..","swap":true}]}'>
-<title>{{.Title}} · {{.App}}</title>
+<title>{{msg .Title}} · {{.App}}</title>
 <link rel="stylesheet" href="/admin/static/app.css?v={{.Version}}">
 <script src="/admin/static/htmx.min.js?v=2.0.4" defer></script>
 <script src="/admin/static/app.js?v={{.Version}}" defer></script>
@@ -12,27 +12,27 @@
 {{if .S}}<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
 <input type="checkbox" id="nav-toggle" class="nav-toggle">
 <header class="topbar">
-  <label for="nav-toggle" class="burger" aria-label="메뉴 열기"><span></span><span></span><span></span></label>
+  <label for="nav-toggle" class="burger" aria-label="{{t "nav.open_menu"}}"><span></span><span></span><span></span></label>
   <a class="brand" href="/admin/">{{template "logo"}}<span>{{.App}}</span></a>
   <div class="spacer"></div>
-  <a class="who" href="/admin/account">{{.S.Username}}{{if .S.IsAdmin}} <span class="badge">관리자</span>{{end}}</a>
+  <a class="who" href="/admin/account">{{.S.Username}}{{if .S.IsAdmin}} <span class="badge">{{t "common.admin"}}</span>{{end}}</a>
   <form method="post" action="/admin/logout" class="inline">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
-    <button class="btn-link">로그아웃</button>
+    <button class="btn-link">{{t "nav.logout"}}</button>
   </form>
 </header>
 <div class="shell">
   <nav class="sidebar">
-    {{if .S.IsAdmin}}<a href="/admin/" class="{{if eq .Nav "dashboard"}}active{{end}}">{{template "icon-home"}}대시보드</a>{{end}}
-    <a href="/admin/repos" class="{{if eq .Nav "repos"}}active{{end}}">{{template "icon-repo"}}저장소</a>
+    {{if .S.IsAdmin}}<a href="/admin/" class="{{if eq .Nav "dashboard"}}active{{end}}">{{template "icon-home"}}{{t "nav.dashboard"}}</a>{{end}}
+    <a href="/admin/repos" class="{{if eq .Nav "repos"}}active{{end}}">{{template "icon-repo"}}{{t "nav.repos"}}</a>
     {{if .S.IsAdmin}}
-    <a href="/admin/users" class="{{if eq .Nav "users"}}active{{end}}">{{template "icon-user"}}사용자</a>
-    <a href="/admin/groups" class="{{if eq .Nav "groups"}}active{{end}}">{{template "icon-group"}}그룹</a>
-    <a href="/admin/perms" class="{{if eq .Nav "perms"}}active{{end}}">{{template "icon-lock"}}권한</a>
-    <a href="/admin/system" class="{{if eq .Nav "system"}}active{{end}}">{{template "icon-gear"}}시스템 설정</a>
+    <a href="/admin/users" class="{{if eq .Nav "users"}}active{{end}}">{{template "icon-user"}}{{t "nav.users"}}</a>
+    <a href="/admin/groups" class="{{if eq .Nav "groups"}}active{{end}}">{{template "icon-group"}}{{t "nav.groups"}}</a>
+    <a href="/admin/perms" class="{{if eq .Nav "perms"}}active{{end}}">{{template "icon-lock"}}{{t "nav.perms"}}</a>
+    <a href="/admin/system" class="{{if eq .Nav "system"}}active{{end}}">{{template "icon-gear"}}{{t "nav.system"}}</a>
     {{end}}
     <div class="sidebar-sep"></div>
-    <a href="/admin/account" class="{{if eq .Nav "account"}}active{{end}}">{{template "icon-key"}}내 계정</a>
+    <a href="/admin/account" class="{{if eq .Nav "account"}}active{{end}}">{{template "icon-key"}}{{t "nav.account"}}</a>
     <div class="sidebar-foot">{{.App}} {{.Version}}</div>
   </nav>
   <main class="content">

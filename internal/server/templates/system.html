@@ -2,115 +2,176 @@
 {{template "system_tabs" .}}
 <div class="grid2">
   <section class="box">
-    <h2>서버 상태</h2>
+    <h2>{{t "system.server_status"}}</h2>
     <dl class="kv">
       <dt>{{.App}}</dt><dd>{{.D.Version}} ({{.D.GoVersion}})</dd>
-      <dt>가동 시간</dt><dd>{{.D.Uptime}}</dd>
-      <dt>관리 서버 메모리</dt><dd>Heap {{size .D.MemAlloc}} / Sys {{size .D.MemSys}} · 고루틴 {{.D.Goroutines}}</dd>
-      <dt>Apache</dt><dd>{{if .D.Apache.Running}}<span class="badge green">실행 중</span> PID {{.D.Apache.PID}} · {{dt .D.Apache.StartedAt}} 시작{{else if .D.Apache.Managed}}<span class="badge red">중지됨</span>{{else}}<span class="badge">외부 관리</span>{{end}}
-        {{if .D.Apache.Managed}}<div class="muted small">재시작 {{.D.Apache.Restarts}}회{{with .D.Apache.LastExit}} · 마지막 종료: {{.}}{{end}}{{if .D.Apache.TLS}} · HTTPS(:{{$.D.Cfg.HTTPSPort}}) 활성{{end}}</div>{{end}}</dd>
+      <dt>{{t "system.uptime"}}</dt><dd>{{.D.Uptime}}</dd>
+      <dt>{{t "system.memory"}}</dt><dd>Heap {{size .D.MemAlloc}} / Sys {{size .D.MemSys}} · {{t "system.goroutines" .D.Goroutines}}</dd>
+      <dt>Apache</dt><dd>{{if .D.Apache.Running}}<span class="badge green">{{t "status.running"}}</span> PID {{.D.Apache.PID}} · {{t "system.started_at" (dt .D.Apache.StartedAt)}}{{else if .D.Apache.Managed}}<span class="badge red">{{t "status.stopped"}}</span>{{else}}<span class="badge">{{t "status.external"}}</span>{{end}}
+        {{if .D.Apache.Managed}}<div class="muted small">{{t "system.restarts" .D.Apache.Restarts}}{{with .D.Apache.LastExit}} · {{t "system.last_exit"}}: {{.}}{{end}}{{if .D.Apache.TLS}} · {{t "system.https_on" $.D.Cfg.HTTPSPort}}{{end}}</div>{{end}}</dd>
       {{range $k, $v := .D.Versions}}<dt>{{$k}}</dt><dd>{{$v}}</dd>{{end}}
-      <dt>디스크 (저장소)</dt><dd>{{size .D.Disk.Used}} / {{size .D.Disk.Total}} ({{.D.Disk.Pct}}%)<progress max="100" value="{{.D.Disk.Pct}}"></progress></dd>
-      <dt>DB 크기</dt><dd>{{size .D.DBSize}}</dd>
-      <dt>authz 검증 도구</dt><dd><span class="badge green">자체 점검 통과</span> <span class="mono small">{{.D.AuthzTool}}</span></dd>
-      <dt>SVN 요청 크기 제한</dt><dd>본문 {{if .D.Cfg.SvnMaxBody}}{{size .D.Cfg.SvnMaxBody}}{{else}}무제한{{end}} · XML {{if .D.Cfg.SvnMaxXML}}{{size .D.Cfg.SvnMaxXML}}{{else}}무제한{{end}}</dd>
+      <dt>{{t "system.disk_repos"}}</dt><dd>{{size .D.Disk.Used}} / {{size .D.Disk.Total}} ({{.D.Disk.Pct}}%)<progress max="100" value="{{.D.Disk.Pct}}"></progress></dd>
+      <dt>{{t "system.db_size"}}</dt><dd>{{size .D.DBSize}}</dd>
+      <dt>{{t "system.authz_tool"}}</dt><dd><span class="badge green">{{t "system.selftest_ok"}}</span> <span class="mono small">{{.D.AuthzTool}}</span></dd>
+      <dt>{{t "system.svn_limits"}}</dt><dd>{{t "system.body"}} {{if .D.Cfg.SvnMaxBody}}{{size .D.Cfg.SvnMaxBody}}{{else}}{{t "system.unlimited"}}{{end}} · XML {{if .D.Cfg.SvnMaxXML}}{{size .D.Cfg.SvnMaxXML}}{{else}}{{t "system.unlimited"}}{{end}}</dd>
     </dl>
   </section>
 
   <section class="box">
-    <h2>경로</h2>
+    <h2>{{t "system.paths"}}</h2>
     <dl class="kv small">
-      <dt>저장소</dt><dd class="mono">{{.D.Cfg.ReposDir}}</dd>
-      <dt>설정 / 인증 파일</dt><dd class="mono">{{.D.Cfg.ConfigDir}}</dd>
+      <dt>{{t "nav.repos"}}</dt><dd class="mono">{{.D.Cfg.ReposDir}}</dd>
+      <dt>{{t "system.path_config"}}</dt><dd class="mono">{{.D.Cfg.ConfigDir}}</dd>
       <dt>DB</dt><dd class="mono">{{.D.Cfg.DBDir}}</dd>
-      <dt>백업</dt><dd class="mono">{{.D.Cfg.BackupDir}}</dd>
-      <dt>SVN URL</dt><dd class="mono">{{.D.SvnBase}}/&lt;저장소&gt;</dd>
-      <dt>관리 UI</dt><dd class="mono">/admin</dd>
+      <dt>{{t "system.path_backups"}}</dt><dd class="mono">{{.D.Cfg.BackupDir}}</dd>
+      <dt>{{t "system.path_locales"}}</dt><dd class="mono">{{.D.LocalesDir}}</dd>
+      <dt>SVN URL</dt><dd class="mono">{{.D.SvnBase}}/&lt;{{t "common.repo"}}&gt;</dd>
+      <dt>{{t "system.admin_ui"}}</dt><dd class="mono">/admin</dd>
     </dl>
   </section>
 </div>
 
 <section class="box">
-  <div class="box-head"><h2>인증 파일 동기화 검증</h2>
+  <div class="box-head"><h2>{{t "sync.title"}}</h2>
     <div class="btn-group">
-      <form method="post" action="/admin/system/sync" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">지금 검증</button></form>
-      <form method="post" action="/admin/system/repair" class="inline" hx-confirm="DB 기준으로 htpasswd / authz 파일을 다시 생성할까요?"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">파일 재생성</button></form>
+      <form method="post" action="/admin/system/sync" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">{{t "sync.check"}}</button></form>
+      <form method="post" action="/admin/system/repair" class="inline" hx-confirm="{{t "sync.repair_confirm"}}"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn">{{t "sync.repair"}}</button></form>
     </div>
   </div>
-  <p class="muted small">DB(단일 원천)에서 생성한 내용과 Apache 가 사용하는 htpasswd / authz 파일을 비교하고, libsvn 으로 authz 문법과 실효 권한을 교차 검증합니다.</p>
+  <p class="muted small">{{t "sync.hint"}}</p>
   {{with .D.Sync}}
   <div class="alert {{if .OK}}ok{{else}}err{{end}}">
-    {{if .OK}}모든 검증을 통과했습니다.{{else}}불일치가 발견되었습니다. "파일 재생성" 으로 복구할 수 있습니다.{{end}}
+    {{if .OK}}{{t "sync.ok"}}{{else}}{{t "sync.mismatch"}}{{end}}
   </div>
   <dl class="kv">
-    <dt>htpasswd 일치</dt><dd>{{if .HtpasswdOK}}<span class="badge green">일치</span>{{else}}<span class="badge red">불일치</span>{{end}} (활성 사용자 {{.Users}}명)</dd>
-    <dt>authz 일치</dt><dd>{{if .AuthzOK}}<span class="badge green">일치</span>{{else}}<span class="badge red">불일치</span>{{end}}</dd>
-    <dt>authz 문법 (libsvn)</dt><dd>{{if .AuthzValid}}<span class="badge green">정상</span>{{else}}<span class="badge red">오류</span> {{.AuthzErr}}{{end}}</dd>
-    <dt>실효 권한 교차 검증</dt><dd>{{.AccessChecks}}건 확인{{range .AccessErrs}}<div class="text-err small">{{.}}</div>{{end}}</dd>
-    {{if .MissingDirs}}<dt>디렉터리 없음</dt><dd class="text-err">{{join .MissingDirs ", "}}</dd>{{end}}
-    {{if .Unregistered}}<dt>미등록 저장소</dt><dd>{{join .Unregistered ", "}}</dd>{{end}}
+    <dt>{{t "sync.htpasswd"}}</dt><dd>{{if .HtpasswdOK}}<span class="badge green">{{t "sync.match"}}</span>{{else}}<span class="badge red">{{t "sync.no_match"}}</span>{{end}} ({{t "sync.active_users" .Users}})</dd>
+    <dt>{{t "sync.authz"}}</dt><dd>{{if .AuthzOK}}<span class="badge green">{{t "sync.match"}}</span>{{else}}<span class="badge red">{{t "sync.no_match"}}</span>{{end}}</dd>
+    <dt>{{t "sync.authz_syntax"}}</dt><dd>{{if .AuthzValid}}<span class="badge green">{{t "sync.valid"}}</span>{{else}}<span class="badge red">{{t "sync.invalid"}}</span> {{.AuthzErr}}{{end}}</dd>
+    <dt>{{t "sync.access_cross"}}</dt><dd>{{t "sync.checked" .AccessChecks}}{{range .AccessErrs}}<div class="text-err small">{{msg .}}</div>{{end}}</dd>
+    {{if .MissingDirs}}<dt>{{t "sync.missing_dirs"}}</dt><dd class="text-err">{{join .MissingDirs ", "}}</dd>{{end}}
+    {{if .Unregistered}}<dt>{{t "sync.unregistered"}}</dt><dd>{{join .Unregistered ", "}}</dd>{{end}}
   </dl>
   {{end}}
   {{if .D.Unregistered}}
-  <div class="alert warn">저장소 디렉터리에 등록되지 않은 저장소가 있습니다: {{join .D.Unregistered ", "}}
-    <form method="post" action="/admin/system/scan" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn sm">등록</button></form>
+  <div class="alert warn">{{t "sync.unregistered_found" (join .D.Unregistered ", ")}}
+    <form method="post" action="/admin/system/scan" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn sm">{{t "sync.register"}}</button></form>
   </div>
   {{end}}
 </section>
 
 <section class="box">
-  <h2>SVN 접속 차단 <span class="count">{{len .D.SvnBlocked}}</span></h2>
-  <p class="muted small">SVN(HTTP Basic) 로그인에 {{.D.Settings.svn_block_minutes}}분 안에 {{.D.Settings.svn_block_attempts}}회 실패한 IP 는 {{.D.Settings.svn_block_minutes}}분 동안 인증 전에 차단됩니다(HTTP 429). Apache 재시작 없이 즉시 적용됩니다. 모든 클라이언트가 같은 IP 로 보이는 환경(일부 Docker Desktop, 프록시 뒤)에서는 허용 횟수를 높이거나 0 으로 끄세요.</p>
+  <h2>{{t "svnblock.title"}} <span class="count">{{len .D.SvnBlocked}}</span></h2>
+  <p class="muted small">{{t "svnblock.hint" .D.Settings.svn_block_minutes .D.Settings.svn_block_attempts}}</p>
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>IP</th><th>실패 횟수</th><th>차단 해제 시각</th><th></th></tr></thead>
+    <thead><tr><th>IP</th><th>{{t "svnblock.fails"}}</th><th>{{t "svnblock.until"}}</th><th></th></tr></thead>
     <tbody>{{range .D.SvnBlocked}}<tr>
       <td class="mono">{{.IP}}</td><td>{{.Fails}}</td><td class="small">{{dt .Until}}</td>
-      <td class="right"><form method="post" action="/admin/system/svn-unblock" class="inline" hx-confirm="{{.IP}} 의 SVN 접속 차단을 해제할까요?"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="ip" value="{{.IP}}"><button class="btn sm">차단 해제</button></form></td>
-    </tr>{{else}}<tr><td colspan="4" class="empty">차단된 IP 가 없습니다.</td></tr>{{end}}</tbody>
+      <td class="right"><form method="post" action="/admin/system/svn-unblock" class="inline" hx-confirm="{{t "svnblock.unblock_confirm" .IP}}"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="ip" value="{{.IP}}"><button class="btn sm">{{t "svnblock.unblock"}}</button></form></td>
+    </tr>{{else}}<tr><td colspan="4" class="empty">{{t "svnblock.none"}}</td></tr>{{end}}</tbody>
   </table></div>
 </section>
 
+{{with .D.Allow}}
+<section class="box" id="access">
+  <h2>{{t "allowip.title"}}</h2>
+  <p class="muted small">{{t "allowip.hint"}}</p>
+  <dl class="kv">
+    <dt>{{t "allowip.current_ip"}}</dt><dd><span class="mono">{{.ClientIP}}</span><div class="muted small">{{t "allowip.current_ip_hint"}}</div></dd>
+  </dl>
+  <form method="post" action="/admin/system/access" class="form">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <div class="grid2">
+      <div>
+        <label><span>{{t "allowip.admin"}}
+          {{if .AdminLen}}<span class="badge blue">{{t "allowip.restricted" .AdminLen}}</span>{{else}}<span class="badge">{{t "allowip.unrestricted"}}</span>{{end}}</span>
+          <textarea name="admin_allow_ips" rows="6" class="mono" spellcheck="false" autocomplete="off" placeholder="192.168.0.0/24&#10;10.0.0.5">{{.Admin}}</textarea></label>
+        {{if .AdminEnv}}<p class="small">{{t "allowip.env_fixed" "SVNGO_ADMIN_ALLOW_IPS"}}: <span class="mono">{{join .AdminEnv ", "}}</span></p>{{end}}
+        <p class="muted small">{{t "allowip.admin_hint"}}</p>
+      </div>
+      <div>
+        <label><span>{{t "allowip.svn"}}
+          {{if .SvnLen}}<span class="badge blue">{{t "allowip.restricted" .SvnLen}}</span>{{else}}<span class="badge">{{t "allowip.unrestricted"}}</span>{{end}}</span>
+          <textarea name="svn_allow_ips" rows="6" class="mono" spellcheck="false" autocomplete="off" placeholder="192.168.0.0/24&#10;2001:db8::/48">{{.Svn}}</textarea></label>
+        {{if .SvnEnv}}<p class="small">{{t "allowip.env_fixed" "SVNGO_SVN_ALLOW_IPS"}}: <span class="mono">{{join .SvnEnv ", "}}</span></p>{{end}}
+        <p class="muted small">{{t "allowip.svn_hint"}}</p>
+        {{if not .SvnManage}}<div class="alert warn">{{t "allowip.svn_unmanaged"}}</div>{{end}}
+      </div>
+    </div>
+    <button class="btn primary">{{t "allowip.save"}}</button>
+  </form>
+</section>
+{{end}}
+
 <div class="grid2">
   <section class="box">
-    <h2>서버 설정</h2>
+    <h2>{{t "settings.title"}}</h2>
     <form method="post" action="/admin/system/settings" class="form">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <label>SVN 기본 URL <span class="muted small">(비우면 접속 주소 기준 자동)</span>
+      <label>{{t "settings.svn_base_url"}} <span class="muted small">({{t "settings.svn_base_url_hint"}})</span>
         <input name="svn_base_url" value="{{.D.Settings.svn_base_url}}" placeholder="https://svn.example.com/svn" maxlength="300"></label>
       <div class="row">
-        <label>페이지당 항목 수<input name="page_size" type="number" min="10" max="200" value="{{.D.Settings.page_size}}"></label>
-        <label>웹 로그인 실패 허용 (15분)<input name="login_attempts" type="number" min="3" max="100" value="{{.D.Settings.login_attempts}}"></label>
+        <label>{{t "settings.page_size"}}<input name="page_size" type="number" min="10" max="200" value="{{.D.Settings.page_size}}"></label>
+        <label>{{t "settings.login_attempts"}}<input name="login_attempts" type="number" min="3" max="100" value="{{.D.Settings.login_attempts}}"></label>
       </div>
       <div class="row">
-        <label>SVN 로그인 실패 허용 (IP별, 0=끔)<input name="svn_block_attempts" type="number" min="0" max="1000" value="{{.D.Settings.svn_block_attempts}}"></label>
-        <label>SVN 차단 시간 (분)<input name="svn_block_minutes" type="number" min="1" max="1440" value="{{.D.Settings.svn_block_minutes}}"></label>
+        <label>{{t "settings.svn_block_attempts"}}<input name="svn_block_attempts" type="number" min="0" max="1000" value="{{.D.Settings.svn_block_attempts}}"></label>
+        <label>{{t "settings.svn_block_minutes"}}<input name="svn_block_minutes" type="number" min="1" max="1440" value="{{.D.Settings.svn_block_minutes}}"></label>
       </div>
-      <label class="check"><input type="checkbox" name="default_layout" value="1"{{if eq .D.Settings.default_layout "1"}} checked{{end}}> 새 저장소에 trunk / branches / tags 기본 생성</label>
-      <button class="btn primary">설정 저장</button>
+      <label>{{t "settings.default_lang"}} <span class="muted small">({{t "settings.default_lang_hint"}})</span>
+        <select name="default_lang">{{range .D.Langs}}<option value="{{.Code}}"{{if eq .Code $.D.DefaultLang}} selected{{end}}>{{.Name}} ({{.Code}})</option>{{end}}</select></label>
+      <label class="check"><input type="checkbox" name="default_layout" value="1"{{if eq .D.Settings.default_layout "1"}} checked{{end}}> {{t "settings.default_layout"}}</label>
+      <button class="btn primary">{{t "settings.save"}}</button>
     </form>
   </section>
 
   <section class="box">
-    <h2>웹 관리자 계정</h2>
+    <h2>{{t "admins.title"}}</h2>
     <div class="table-wrap"><table class="table">
-      <thead><tr><th>아이디</th><th class="hide-sm">최근 로그인</th><th></th></tr></thead>
+      <thead><tr><th>{{t "common.username"}}</th><th class="hide-sm">{{t "admins.last_login"}}</th><th></th></tr></thead>
       <tbody>{{range .D.Admins}}<tr>
-        <td>{{.Username}}{{if eq .ID $.S.PrincipalID}} <span class="badge">나</span>{{end}}</td>
+        <td>{{.Username}}{{if eq .ID $.S.PrincipalID}} <span class="badge">{{t "admins.me"}}</span>{{end}}</td>
         <td class="hide-sm small">{{dt .LastLogin}}</td>
-        <td class="right">{{if ne .ID $.S.PrincipalID}}<form method="post" action="/admin/system/admins/{{.ID}}/delete" class="inline" hx-confirm="관리자 '{{.Username}}' 를 삭제할까요?"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="btn sm danger">삭제</button></form>{{end}}</td>
+        <td class="right">{{if ne .ID $.S.PrincipalID}}<form method="post" action="/admin/system/admins/{{.ID}}/delete" class="inline" hx-confirm="{{t "admins.delete_confirm" .Username}}"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="btn sm danger">{{t "common.delete"}}</button></form>{{end}}</td>
       </tr>{{end}}</tbody>
     </table></div>
     <details>
-      <summary class="btn sm">관리자 추가</summary>
+      <summary class="btn sm">{{t "admins.add"}}</summary>
       <form method="post" action="/admin/system/admins" class="form panel">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <label>아이디<input name="username" required maxlength="64" autocomplete="off"></label>
-        <label>비밀번호<input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
-        <label>비밀번호 확인<input name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
-        <button class="btn primary">추가</button>
+        <label>{{t "common.username"}}<input name="username" required maxlength="64" autocomplete="off"></label>
+        <label>{{t "common.password"}}<input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+        <label>{{t "common.password_confirm"}}<input name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+        <button class="btn primary">{{t "common.add"}}</button>
       </form>
     </details>
-    <p class="muted small">웹 관리자 계정은 SVN 인증과 별개입니다. SVN 접근이 필요하면 사용자 메뉴에서 SVN 사용자를 따로 만드세요.</p>
+    <p class="muted small">{{t "admins.hint"}}</p>
   </section>
 </div>
+
+<section class="box">
+  <div class="box-head"><h2>{{t "locales.title"}} <span class="count">{{len .D.Langs}}</span></h2>
+    <form method="post" action="/admin/system/locales/reload" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn sm">{{t "locales.reload"}}</button></form>
+  </div>
+  <p class="muted small">{{th "locales.hint" (code .D.LocalesDir) (code "<code>.json")}}</p>
+  {{range .D.LocaleErrors}}<div class="alert warn">{{msg .}}</div>{{end}}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>{{t "locales.col.code"}}</th><th>{{t "common.name"}}</th><th>{{t "locales.col.source"}}</th><th class="num">{{t "locales.col.coverage"}}</th><th></th></tr></thead>
+    <tbody>{{range .D.Langs}}<tr>
+      <td class="mono">{{.Code}}{{if eq .Code $.D.DefaultLang}} <span class="badge">{{t "locales.default"}}</span>{{end}}</td>
+      <td>{{.Name}}</td>
+      <td>{{if and .Builtin .File}}{{t "locales.source_override"}}{{else if .Builtin}}{{t "locales.source_builtin"}}{{else}}{{t "locales.source_file"}}{{end}}</td>
+      <td class="num nowrap">{{.Percent}}%{{if .Missing}} <span class="muted small">({{t "locales.missing" .Missing}})</span>{{end}}</td>
+      <td class="right nowrap">
+        <a class="btn sm" hx-boost="false" href="/admin/system/locales/{{.Code}}.json" download>{{t "common.download"}}</a>
+        {{if .File}}<form method="post" action="/admin/system/locales/{{.Code}}/delete" class="inline" hx-confirm="{{if .Builtin}}{{t "locales.delete_override_confirm" .Code}}{{else}}{{t "locales.delete_confirm" .Code}}{{end}}"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="btn sm danger">{{t "common.delete"}}</button></form>{{end}}
+      </td>
+    </tr>{{end}}</tbody>
+  </table></div>
+  <form method="post" action="/admin/system/locales" class="form row-form" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <label>{{t "locales.upload_file"}}<input type="file" name="file" accept=".json,application/json" required></label>
+    <button class="btn primary">{{t "common.upload"}}</button>
+  </form>
+  <p class="muted small">{{t "locales.upload_hint"}}</p>
+</section>
 {{end}}

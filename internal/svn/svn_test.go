@@ -11,7 +11,7 @@ func TestSelfTestAuthz(t *testing.T) {
 	ctx := context.Background()
 	for _, bin := range []string{"", "/bin/true", "/nonexistent/svngo-authz"} {
 		err := (&Tools{Authz: bin}).SelfTestAuthz(ctx, t.TempDir())
-		if err == nil || !strings.Contains(err.Error(), "authz 검증 도구") {
+		if err == nil || !strings.Contains(err.Error(), "authz validator") {
 			t.Errorf("validator %q: err = %v", bin, err)
 		}
 	}
