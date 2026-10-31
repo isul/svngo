@@ -16,6 +16,7 @@ A lightweight Subversion (SVN) server and web administration system written in G
                        ┌─────────────────────── SvnGo container (non-root, uid 1000) ────────────────────────┐
  svn client ───HTTP(S)─▶ Apache httpd :8080 / :8443                                                          │
  web browser           │   ├─ /svn/<repo>    mod_dav_svn + mod_authz_svn + mod_auth_basic/authn_file         │
+                       │   ├─ /<location>/<repo>  same, one <Location> per SVN location (generated)          │
                        │   │                 (htpasswd: bcrypt, authz: per-path permissions)                 │
                        │   └─ /admin         reverse proxy ──▶ Go admin server 127.0.0.1:9000                │
                        │                                       ├─ SQLite (WAL): single source of truth       │
@@ -36,12 +37,12 @@ A lightweight Subversion (SVN) server and web administration system written in G
 | Area | Features |
 |---|---|
 | Dashboard | Counts of repositories/users/groups/permissions, Apache status, disk usage, recent jobs and changes |
-| Repositories | Create (optional trunk/branches/tags), list, search and paging, rename, delete (confirm by retyping the name), enable/disable, UUID, revision and size (cached), verify (`svnadmin verify`), backup (dump.gz) and restore |
+| Repositories | Create (optional trunk/branches/tags), list, search and paging, rename, move between SVN locations, delete (confirm by retyping the name), enable/disable, UUID, revision and size (cached), verify (`svnadmin verify`), backup (dump.gz) and restore |
 | Web browsing | Directory and file views, view at a revision, raw download (streamed), commit log (paged), changed files, diff, author and message. SVN permissions apply to every page. |
 | Users | Create, edit, delete, change password, issue a temporary password, enable/disable, search, import htpasswd (bcrypt/APR1) |
 | Groups | Create, edit, delete, add and remove members |
 | Permissions | Read / read-write / no access per repository and directory. Subjects are users, groups, all authenticated users (`$authenticated`) and everyone (`*`). After saving, the effective result is verified with libsvn, and the access check tool shows it immediately. |
-| System settings | SVN base URL, default layout, page size, login attempt limits, allowed IPs for the admin UI and SVN, web admin accounts, auth file sync check and regeneration, repository directory scan (registration) |
+| System settings | SVN base URL, SVN locations (extra URL paths such as `/android/<repo>`), default layout, page size, login attempt limits, allowed IPs for the admin UI and SVN, web admin accounts, auth file sync check and regeneration, repository directory scan (registration) |
 | Backups | List, download, delete and upload backups; restore into a new repository or overwrite an existing one |
 | Logs | Audit log (who changed what), application log, Apache log |
 | Languages | English and Korean built in, automatic selection from the browser language, per-user language in My account, system default language, add/upload/download language files (JSON) |
@@ -566,7 +567,7 @@ You can set which client IPs may reach the admin UI and SVN, separately.
 | List | Scope | Blocked by | Takes effect |
 |---|---|---|---|
 | Admin UI | All of `/admin` (web sign-in of both web admins and SVN users) | Go admin server, 403 page | Immediately on save |
-| SVN | `/svn` (svn clients: checkout, commit, etc.) | Apache, 403 **before authentication** | Immediately on save (Apache graceful restart) |
+| SVN | `/svn` and every [SVN location](#svn-locations-multiple-url-paths) (all paths except `/admin`; svn clients: checkout, commit, etc.) | Apache, 403 **before authentication** | Immediately on save (Apache graceful restart) |
 
 **Configuration**
 
@@ -600,6 +601,45 @@ docker compose exec svngo svngo access-reset all     # both
 
 **Note**: the client IP is the connection address Apache sees. Behind Docker Desktop (Windows/macOS), NAT or a reverse proxy, all clients may appear with the same address (e.g. `172.17.0.1` or the proxy IP). If **Your current IP** differs from your PC's real address, IP restrictions cannot tell clients apart; restrict access in the host firewall or the proxy instead.
 
+## SVN locations (multiple URL paths)
+
+Repositories are served at `/svn/<repository>` by default. An **SVN location** adds another URL path whose repositories live in the folder of the same name inside the repos volume, so the URLs of an existing server with several `<Location>` blocks can be kept as they are.
+
+| URL | Folder |
+|---|---|
+| `/svn/<repository>` (default) | `/data/repos/<repository>` |
+| `/android/<repository>` | `/data/repos/android/<repository>` |
+| `/hw/<repository>` | `/data/repos/hw/<repository>` |
+
+```
+/data/repos/            ← default location (/svn)
+├── myrepo/             → /svn/myrepo
+├── android/            ← location "android"
+│   ├── app/            → /android/app
+│   └── launcher/       → /android/launcher
+└── hw/                 ← location "hw"
+    └── board/          → /hw/board
+```
+
+**Managing locations** (**System settings → SVN locations**)
+
+- **Add**: enter a name. The folder is created if it does not exist, and repositories already in it are registered. The Apache configuration is tested (`httpd -t`) and applied with a graceful restart, so checkouts and commits in progress are not interrupted and the Apache PID does not change. If the test fails, nothing changes.
+- Folders in the repos volume that contain repositories but are not registered as locations are offered with a **Register /<name>** button.
+- **Delete**: only possible when the location has no repositories left. The folder is removed only if it is empty.
+- A location cannot be renamed. Names follow the repository name rules; `admin` and `svn` are reserved.
+
+**Rules**
+
+- **Repository names are unique across all locations.** Permissions (`authz`), the web UI (`/admin/repos/<name>`) and backups identify a repository by its name alone; mod_authz_svn matches `[repo:/path]` by folder name, so one `authz` and one `htpasswd` serve every location.
+- A repository at `/svn` cannot have the name of a location, and a location cannot be added while a `/svn` repository has its name.
+- A folder whose name is already used by a registered repository in another location is not registered; it is reported as a **name conflict** in system settings and in the sync check.
+- **Create** a repository in a location by choosing it in the create form. **Move** a repository on its **Settings** page (**Rename / move**); existing working copies need `svn relocate`.
+- **Restore** into a new repository asks for its location; overwriting an existing repository keeps its location.
+- The SVN IP allow list and SVN brute-force blocking apply to every SVN path (everything except `/admin`).
+- When **SVN base URL** is set (e.g. `https://svn.example.com/svn`), the URLs of other locations replace the trailing `/svn` (`https://svn.example.com/android/...`).
+- Keep location folders on the same volume as `/data/repos`. Each location has its own work folder (`.svngo-tmp`) so creating and restoring work on any mount, but moving a repository between locations is a rename and fails across mounts.
+- With an external Apache (`SVNGO_MANAGE_APACHE` off), add a `<Location /<name>>` block with `SVNParentPath /data/repos/<name>` (same directives as `/svn`) for every location yourself.
+
 ## Migrating from an existing SVN server
 
 1. **Repositories**: copy the existing repository directories into the repos volume. When **System settings** in the web UI warns about unregistered repositories, click **Register**. They are also scanned and registered at startup.
@@ -607,6 +647,8 @@ docker compose exec svngo svngo access-reset all     # both
    docker compose cp .\old-repos\myrepo svngo:/data/repos/myrepo
    ```
    Alternatively, upload an `svnadmin dump` file on the **Backups** page and restore it into a new repository (.svndump / .svndump.gz).
+
+   If the old server has several `<Location>` blocks (e.g. `/android` with `SVNParentPath /var/svn/android`), copy each parent folder to a folder of the same name (`/data/repos/android/`) and register it in **System settings → SVN locations** (or click **Register /android**). The URLs stay the same, so working copies only need `svn relocate` when the host or port changes. Rename folders whose name differs from the URL path (e.g. `SVNParentPath /var/svn/delphi/src` for `/delphi` → `/data/repos/delphi/`), and make repository names unique across all locations first.
 2. **Users**: paste the existing htpasswd contents or upload the file in **Users → Import htpasswd**. bcrypt and APR1-MD5 (`$apr1$`) hashes are supported. APR1 users can keep using SVN as is, and their hash is converted to bcrypt automatically the first time they sign in to the web UI. SHA1, crypt and plain-text entries are not imported for security reasons.
 3. **Permissions**: set up groups and permission rules again in the web UI. The `authz` file is generated from the DB, so do not edit it by hand; manual edits are overwritten by the next change.
 
@@ -636,7 +678,7 @@ docker compose exec svngo svngo access-reset all     # both
   - It applies immediately without restarting Apache, and the block list can be viewed and cleared in system settings.
   - Blocks and unblocks are recorded in the audit log.
 - **IP access restriction**: separate allowed IP/CIDR lists for the admin UI and SVN. Apache rejects SVN requests with 403 before authentication, and the Go server rejects every admin page and sign-in request. If a stored list is corrupt, only loopback is allowed (fail-closed). See [Restricting access by IP](#restricting-access-by-ip).
-- **Request size limits**: `/svn` bodies and XML requests are limited. Other paths accept up to 1 MB, and the admin pages apply per-feature limits in the Go server.
+- **Request size limits**: SVN request bodies and XML requests (`/svn` and SVN locations) are limited. Other paths accept up to 1 MB, and the admin pages apply per-feature limits in the Go server.
 - **Mandatory authz validation**: at startup the validator is self-tested: it must accept a valid file, reject an invalid one and evaluate permissions correctly. If any check fails the server does not start, and there is no path that applies auth files without validation.
 - **Security headers**: CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP, HSTS (over HTTPS).
 - **Container**: runs as non-root (uid 1000) with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. PID 1 is tini.
@@ -695,6 +737,7 @@ The E2E tests verify the following with real `svn` commands:
 10. Access a new repository without restarting Apache (PID and restart count compared)
 11. Commit history and diff in the web UI
 12. Data kept after `docker compose restart`
+13. SVN locations: add a location, checkout/commit/server-side copy at `/<location>/<repository>`, SVN IP allow list on location paths, move between locations, delete the location (Apache PID unchanged)
 
 ## Directory layout
 

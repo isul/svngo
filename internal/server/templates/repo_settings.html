@@ -44,12 +44,16 @@
 </section>
 
 <section class="box">
-  <h2>{{t "repo.rename"}}</h2>
+  {{$multi := gt (len .D.Locations) 1}}
+  <h2>{{if $multi}}{{t "repo.move_title"}}{{else}}{{t "repo.rename"}}{{end}}</h2>
   <form method="post" action="/admin/repos/{{.Repo.Name}}/rename" class="form row-form" hx-confirm="{{t "repo.rename_confirm"}}">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    {{if $multi}}<label>{{t "repo.location"}}
+      <select name="location">{{range .D.Locations}}<option value="{{.Name}}"{{if eq .Name $.Repo.Location}} selected{{end}}>/{{.Prefix}}/</option>{{end}}</select></label>{{end}}
     <label>{{t "repo.new_name"}}<input name="new_name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" value="{{.Repo.Name}}"></label>
-    <button class="btn">{{t "repo.rename"}}</button>
+    <button class="btn">{{if $multi}}{{t "repo.move_title"}}{{else}}{{t "repo.rename"}}{{end}}</button>
   </form>
+  <div class="muted small mono">{{.Repo.SvnURL}}</div>
   <p class="muted small">{{th "repo.rename_hint" (code "svn relocate URL")}}</p>
 </section>
 

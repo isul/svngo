@@ -34,6 +34,16 @@ func TestNames(t *testing.T) {
 	if BackupName("proj-20260101-120000-r5.svndump.gz") != nil {
 		t.Error("valid backup name rejected")
 	}
+	for _, n := range []string{"android", "TechCommerce", "hw", "my.loc-1_x", "administrator", "svn2"} {
+		if LocationName(n) != nil {
+			t.Errorf("location %q should be valid", n)
+		}
+	}
+	for _, n := range []string{"", "admin", "ADMIN", "svn", "Svn", "a/b", ".svngo-tmp", "x.", "a b", "../x", strings.Repeat("a", 65)} {
+		if LocationName(n) == nil {
+			t.Errorf("location %q should be invalid", n)
+		}
+	}
 }
 
 func TestRulePath(t *testing.T) {

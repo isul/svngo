@@ -37,7 +37,7 @@ type Supervisor struct {
 	tls       bool
 	done      chan struct{}
 
-	applyMu sync.Mutex // serializes ApplySvnAccess
+	applyMu sync.Mutex // serializes generated include file changes
 
 	// OnAuthFail receives the client IP of every failed SVN Basic login.
 	OnAuthFail func(ip string)
@@ -80,6 +80,7 @@ func (ap *Supervisor) env() []string {
 		"SVNGO_SVN_MAX_XML=" + strconv.FormatInt(ap.cfg.SvnMaxXML, 10),
 		"SVNGO_SVN_BLOCK_MAP=" + filepath.Join(ap.cfg.RunDir, blockFile),
 		"SVNGO_SVN_ACCESS_CONF=" + AccessFile(ap.cfg.RunDir),
+		"SVNGO_SVN_LOCATIONS_CONF=" + LocationsFile(ap.cfg.RunDir),
 	}
 	if tz, ok := os.LookupEnv("TZ"); ok {
 		env = append(env, "TZ="+tz)

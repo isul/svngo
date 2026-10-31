@@ -159,6 +159,9 @@ func (c *client) postOK(path string, form url.Values) string {
 	c.e.t.Helper()
 	st, loc, body := c.post(path, form)
 	if st != http.StatusSeeOther {
+		if m := reErrorBox.FindStringSubmatch(body); m != nil {
+			c.e.t.Fatalf("POST %s: status %d: %s", path, st, strings.TrimSpace(m[1]))
+		}
 		c.e.t.Fatalf("POST %s: status %d body=%s", path, st, validate.Clip(body, 400))
 	}
 	_, page := c.get(loc)
@@ -180,6 +183,8 @@ func (c *client) postErr(path string, form url.Values) string {
 	}
 	return extractAlert(page)
 }
+
+var reErrorBox = regexp.MustCompile(`(?s)class="box error-box">\s*<h1>[^<]*</h1>\s*<p>(.*?)</p>`)
 
 var reAlert = regexp.MustCompile(`(?s)class="alert (?:err|ok)"[^>]*>(.*?)</div>`)
 

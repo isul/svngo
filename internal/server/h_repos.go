@@ -13,7 +13,6 @@ import (
 
 	"svngo/internal/apache"
 	"svngo/internal/i18n"
-	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/svn"
 	"svngo/internal/validate"
@@ -22,6 +21,7 @@ import (
 type RepoRow struct {
 	ID          int64
 	Name        string
+	Location    string // "" = default (/svn)
 	Description string
 	Enabled     bool
 	CreatedAt   int64
@@ -29,22 +29,23 @@ type RepoRow struct {
 	SizeAt      int64
 	Youngest    int64
 	Rules       int
+	Dir         string
+	SvnURL      string
 }
-
-func (a *App) repoDir(name string) string { return filepath.Join(a.cfg.ReposDir, name) }
 
 func (a *App) getRepo(ctx context.Context, q store.DBTX, name string) (*RepoRow, error) {
 	if err := validate.RepoName(name); err != nil {
 		return nil, sql.ErrNoRows
 	}
 	r := &RepoRow{}
-	err := q.QueryRowContext(ctx, `SELECT id, name, description, enabled, created_at, size_bytes, size_at,
+	err := q.QueryRowContext(ctx, `SELECT id, name, location, description, enabled, created_at, size_bytes, size_at,
 		(SELECT COUNT(*) FROM rules WHERE repo_id=repos.id) FROM repos WHERE name=?`, name).
-		Scan(&r.ID, &r.Name, &r.Description, &r.Enabled, &r.CreatedAt, &r.SizeBytes, &r.SizeAt, &r.Rules)
+		Scan(&r.ID, &r.Name, &r.Location, &r.Description, &r.Enabled, &r.CreatedAt, &r.SizeBytes, &r.SizeAt, &r.Rules)
 	if err != nil {
 		return nil, err
 	}
-	r.Youngest = svn.FSFSYoungest(a.repoDir(r.Name))
+	r.Dir = a.repoPath(r.Location, r.Name)
+	r.Youngest = svn.FSFSYoungest(r.Dir)
 	return r, nil
 }
 
@@ -85,7 +86,7 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request, s *Session) {
 	jobs, _ := a.listJobs(ctx, "", 5)
 	v := &View{Title: i18n.M("nav.dashboard"), Nav: "dashboard", D: map[string]any{
 		"Counts": counts, "TotalSize": total, "Disk": diskUsage(a.cfg.ReposDir), "Audits": audits, "Jobs": jobs,
-		"SvnBase": a.svnBaseURL(r), "Apache": a.apacheStatus(), "Uptime": time.Since(a.started).Round(time.Second).String(),
+		"Locations": a.locationRows(r), "Apache": a.apacheStatus(), "Uptime": time.Since(a.started).Round(time.Second).String(),
 	}}
 	a.render(w, r, s, http.StatusOK, "dashboard", v)
 }
@@ -94,9 +95,9 @@ func (a *App) handleRepos(w http.ResponseWriter, r *http.Request, s *Session) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	like := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(q) + "%"
-	rows, err := a.db.QueryContext(ctx, `SELECT id, name, description, enabled, created_at, size_bytes, size_at,
+	rows, err := a.db.QueryContext(ctx, `SELECT id, name, location, description, enabled, created_at, size_bytes, size_at,
 		(SELECT COUNT(*) FROM rules WHERE repo_id=repos.id) FROM repos
-		WHERE name LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' ORDER BY name`, like, like)
+		WHERE name LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' OR location LIKE ? ESCAPE '\' ORDER BY name`, like, like, like)
 	if err != nil {
 		a.errorPage(w, r, s, 500, err)
 		return
@@ -105,7 +106,7 @@ func (a *App) handleRepos(w http.ResponseWriter, r *http.Request, s *Session) {
 	var all []*RepoRow
 	for rows.Next() {
 		rr := &RepoRow{}
-		if err := rows.Scan(&rr.ID, &rr.Name, &rr.Description, &rr.Enabled, &rr.CreatedAt, &rr.SizeBytes, &rr.SizeAt, &rr.Rules); err != nil {
+		if err := rows.Scan(&rr.ID, &rr.Name, &rr.Location, &rr.Description, &rr.Enabled, &rr.CreatedAt, &rr.SizeBytes, &rr.SizeAt, &rr.Rules); err != nil {
 			continue
 		}
 		if !s.IsAdmin() && (!rr.Enabled || !pol.Traversable(rr.Name, "/", s.Username)) {
@@ -117,17 +118,20 @@ func (a *App) handleRepos(w http.ResponseWriter, r *http.Request, s *Session) {
 	pg := newPager(r, len(all), a.pageSize(r))
 	page := all[pg.Offset():min(pg.Offset()+pg.Size, len(all))]
 	for _, rr := range page {
-		rr.Youngest = svn.FSFSYoungest(a.repoDir(rr.Name))
+		rr.Dir = a.repoPath(rr.Location, rr.Name)
+		rr.SvnURL = a.svnRepoURL(r, rr.Location, rr.Name)
+		rr.Youngest = svn.FSFSYoungest(rr.Dir)
 		if s.IsAdmin() && (rr.SizeBytes < 0 || time.Since(time.Unix(rr.SizeAt, 0)) > time.Hour) {
 			a.refreshSizeAsync(rr.Name)
 		}
 	}
 	v := &View{Title: i18n.M("nav.repos"), Nav: "repos", D: map[string]any{
-		"Repos": page, "Pager": pg, "Q": q, "SvnBase": a.svnBaseURL(r),
+		"Repos": page, "Pager": pg, "Q": q,
 		"DefaultLayout": store.Setting(ctx, a.db, "default_layout") == "1",
 	}}
 	if s.IsAdmin() {
 		v.D["Subjects"] = a.subjectOptions(ctx)
+		v.D["Locations"] = a.locationRows(r)
 	}
 	a.render(w, r, s, http.StatusOK, "repos", v)
 }
@@ -139,6 +143,7 @@ func (a *App) handleRepoCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 	layout := r.PostFormValue("layout") == "1"
 	subject := r.PostFormValue("subject")
 	access := r.PostFormValue("access")
+	loc := r.PostFormValue("location")
 	err := func() error {
 		if err := validate.RepoName(name); err != nil {
 			return err
@@ -148,11 +153,17 @@ func (a *App) handleRepoCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 				return err
 			}
 		}
-		final := a.repoDir(name)
-		if _, err := os.Stat(final); err == nil {
+		if err := checkRepoPlacement(ctx, a.db, loc, name); err != nil {
+			return err
+		}
+		final := a.repoPath(loc, name)
+		if _, err := os.Lstat(final); err == nil {
 			return i18n.E("repo.err.dir_exists_name", name)
 		}
-		tmp := filepath.Join(a.cfg.TmpDir(), "create-"+passwd.RandomString(10, "abcdefghijklmnopqrstuvwxyz0123456789"))
+		tmp, err := a.tmpPath(loc, "create-")
+		if err != nil {
+			return i18n.Wrap(err, "repo.err.create")
+		}
 		defer os.RemoveAll(tmp)
 		if err := a.svn.Create(ctx, tmp); err != nil {
 			return i18n.Wrap(err, "repo.err.create")
@@ -163,8 +174,11 @@ func (a *App) handleRepoCreate(w http.ResponseWriter, r *http.Request, s *Sessio
 			}
 		}
 		renamed := false
-		err := a.mutate(ctx, s.Username, "repo.create", name, func(tx *sql.Tx) error {
-			res, err := tx.ExecContext(ctx, "INSERT INTO repos(name, description, created_at) VALUES(?,?,?)", name, desc, store.Now())
+		err = a.mutate(ctx, s.Username, "repo.create", repoLabel(loc, name), func(tx *sql.Tx) error {
+			if err := checkRepoPlacement(ctx, tx, loc, name); err != nil {
+				return err
+			}
+			res, err := tx.ExecContext(ctx, "INSERT INTO repos(name, location, description, created_at) VALUES(?,?,?,?)", name, loc, desc, store.Now())
 			if err != nil {
 				if strings.Contains(err.Error(), "UNIQUE") {
 					return i18n.E("repo.err.name_registered")
@@ -211,7 +225,7 @@ func (a *App) handleRepoOverview(w http.ResponseWriter, r *http.Request, s *Sess
 		return
 	}
 	ctx := r.Context()
-	dir := a.repoDir(repo.Name)
+	dir := repo.Dir
 	uuid, uuidErr := a.svn.UUID(ctx, dir)
 	if y, err := a.svn.Youngest(ctx, dir); err == nil {
 		repo.Youngest = y
@@ -222,7 +236,7 @@ func (a *App) handleRepoOverview(w http.ResponseWriter, r *http.Request, s *Sess
 		a.refreshSizeAsync(repo.Name)
 	}
 	v := &View{Title: i18n.Raw(repo.Name), Nav: "repos", Tab: "overview", Repo: repo, D: map[string]any{
-		"UUID": uuid, "UUIDErr": uuidErr, "Log": entries, "SvnURL": a.svnBaseURL(r) + "/" + repo.Name,
+		"UUID": uuid, "UUIDErr": uuidErr, "Log": entries, "SvnURL": a.svnRepoURL(r, repo.Location, repo.Name),
 	}}
 	if s.IsAdmin() {
 		v.D["Jobs"], _ = a.listJobs(ctx, repo.Name, 5)
@@ -239,8 +253,9 @@ func (a *App) handleRepoSettings(w http.ResponseWriter, r *http.Request, s *Sess
 	}
 	backups, _ := a.listBackups(repo.Name)
 	jobs, _ := a.listJobs(r.Context(), repo.Name, 10)
+	repo.SvnURL = a.svnRepoURL(r, repo.Location, repo.Name)
 	a.render(w, r, s, http.StatusOK, "repo_settings", &View{Title: i18n.M("title.repo_settings", repo.Name), Nav: "repos", Tab: "settings", Repo: repo,
-		D: map[string]any{"Backups": backups, "Jobs": jobs}})
+		D: map[string]any{"Backups": backups, "Jobs": jobs, "Locations": a.locationRows(r)}})
 }
 
 func (a *App) handleRepoUpdate(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -282,17 +297,28 @@ func (a *App) handleRepoRename(w http.ResponseWriter, r *http.Request, s *Sessio
 	}
 	ctx := r.Context()
 	newName := strings.TrimSpace(r.PostFormValue("new_name"))
+	// forms without a location field keep the current one
+	newLoc := repo.Location
+	if v, ok := r.PostForm["location"]; ok && len(v) > 0 {
+		newLoc = v[0]
+	}
 	err := func() error {
 		if err := validate.RepoName(newName); err != nil {
 			return err
 		}
-		if newName == repo.Name {
+		if newName == repo.Name && newLoc == repo.Location {
 			return i18n.E("repo.err.same_name")
 		}
-		oldDir, newDir := a.repoDir(repo.Name), a.repoDir(newName)
+		if err := checkRepoPlacement(ctx, a.db, newLoc, newName); err != nil {
+			return err
+		}
+		oldDir, newDir := repo.Dir, a.repoPath(newLoc, newName)
 		renamed := false
-		err := a.mutate(ctx, s.Username, "repo.rename", repo.Name+" -> "+newName, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, "UPDATE repos SET name=? WHERE id=?", newName, repo.ID); err != nil {
+		err := a.mutate(ctx, s.Username, "repo.rename", repoLabel(repo.Location, repo.Name)+" -> "+repoLabel(newLoc, newName), func(tx *sql.Tx) error {
+			if err := checkRepoPlacement(ctx, tx, newLoc, newName); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE repos SET name=?, location=? WHERE id=?", newName, newLoc, repo.ID); err != nil {
 				if strings.Contains(err.Error(), "UNIQUE") {
 					return i18n.E("repo.err.name_in_use")
 				}
@@ -316,7 +342,11 @@ func (a *App) handleRepoRename(w http.ResponseWriter, r *http.Request, s *Sessio
 		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.Msg{}, err)
 		return
 	}
-	a.done(w, r, "/admin/repos/"+newName+"/settings", i18n.M("repo.renamed", newName), nil)
+	msg := i18n.M("repo.renamed", newName)
+	if newLoc != repo.Location {
+		msg = i18n.M("repo.moved", "/"+locPrefix(newLoc)+"/"+newName)
+	}
+	a.done(w, r, "/admin/repos/"+newName+"/settings", msg, nil)
 }
 
 func (a *App) handleRepoDelete(w http.ResponseWriter, r *http.Request, s *Session) {
@@ -329,10 +359,14 @@ func (a *App) handleRepoDelete(w http.ResponseWriter, r *http.Request, s *Sessio
 		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.Msg{}, i18n.E("repo.err.confirm_name"))
 		return
 	}
-	dir := a.repoDir(repo.Name)
-	trash := filepath.Join(a.cfg.TmpDir(), "trash-"+repo.Name+"-"+passwd.RandomString(8, "abcdefghijklmnopqrstuvwxyz0123456789"))
+	dir := repo.Dir
+	trash, err := a.tmpPath(repo.Location, "trash-"+repo.Name+"-")
+	if err != nil {
+		a.done(w, r, "/admin/repos/"+repo.Name+"/settings", i18n.Msg{}, i18n.Wrap(err, "repo.err.move_dir"))
+		return
+	}
 	moved := false
-	err := a.mutate(ctx, s.Username, "repo.delete", repo.Name, func(tx *sql.Tx) error {
+	err = a.mutate(ctx, s.Username, "repo.delete", repoLabel(repo.Location, repo.Name), func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM repos WHERE id=?", repo.ID); err != nil {
 			return err
 		}
@@ -412,7 +446,11 @@ func dirSize(ctx context.Context, dir string) (int64, error) {
 }
 
 func (a *App) refreshSize(ctx context.Context, name string) (int64, error) {
-	n, err := dirSize(ctx, a.repoDir(name))
+	dir, err := a.repoDirByName(ctx, name)
+	if err != nil {
+		return -1, err
+	}
+	n, err := dirSize(ctx, dir)
 	if err != nil {
 		return -1, err
 	}

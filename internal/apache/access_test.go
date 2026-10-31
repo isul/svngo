@@ -23,7 +23,7 @@ func TestSvnAccessConf(t *testing.T) {
 		"RewriteCond expr \"! -R '192.168.1.0/24'\"\n" +
 		"RewriteCond expr \"! -R '10.0.0.5/32'\"\n" +
 		"RewriteCond expr \"! -R '2001:db8::/48'\"\n" +
-		"RewriteRule \"^/svn(/|$)\" - [F,L]\n"
+		"RewriteRule \"^/(?!admin(?:/|$)).\" - [F,L]\n"
 	if got != want {
 		t.Fatalf("SvnAccessConf:\n%s\nwant:\n%s", got, want)
 	}

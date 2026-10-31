@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"svngo/internal/i18n"
-	"svngo/internal/passwd"
 	"svngo/internal/store"
 	"svngo/internal/validate"
 )
@@ -109,7 +108,10 @@ func (a *App) startJob(actor, kind, repo string, fn func(ctx context.Context) (i
 
 func (a *App) jobVerify(name string) func(ctx context.Context) (i18n.Msg, error) {
 	return func(ctx context.Context) (i18n.Msg, error) {
-		dir := a.repoDir(name)
+		dir, err := a.repoDirByName(ctx, name)
+		if err != nil {
+			return i18n.Msg{}, err
+		}
 		y, err := a.svn.Youngest(ctx, dir)
 		if err != nil {
 			return i18n.Msg{}, err
@@ -123,7 +125,10 @@ func (a *App) jobVerify(name string) func(ctx context.Context) (i18n.Msg, error)
 
 func (a *App) jobBackup(name string) func(ctx context.Context) (i18n.Msg, error) {
 	return func(ctx context.Context) (i18n.Msg, error) {
-		dir := a.repoDir(name)
+		dir, err := a.repoDirByName(ctx, name)
+		if err != nil {
+			return i18n.Msg{}, err
+		}
 		y, err := a.svn.Youngest(ctx, dir)
 		if err != nil {
 			return i18n.Msg{}, err
@@ -162,8 +167,19 @@ func (a *App) jobBackup(name string) func(ctx context.Context) (i18n.Msg, error)
 	}
 }
 
-func (a *App) jobRestore(file, target string, overwrite bool, actor string) func(ctx context.Context) (i18n.Msg, error) {
+// jobRestore loads a dump into target. An existing repository keeps its
+// location; a new one is created in loc.
+func (a *App) jobRestore(file, target, loc string, overwrite bool, actor string) func(ctx context.Context) (i18n.Msg, error) {
 	return func(ctx context.Context) (i18n.Msg, error) {
+		var curLoc string
+		if a.db.QueryRowContext(ctx, "SELECT location FROM repos WHERE name=?", target).Scan(&curLoc) == nil {
+			if !overwrite {
+				return i18n.Msg{}, i18n.E("job.err.target_exists")
+			}
+			loc = curLoc
+		} else if err := checkRepoPlacement(ctx, a.db, loc, target); err != nil {
+			return i18n.Msg{}, err
+		}
 		f, err := os.Open(filepath.Join(a.cfg.BackupDir, file))
 		if err != nil {
 			return i18n.Msg{}, err
@@ -174,7 +190,10 @@ func (a *App) jobRestore(file, target string, overwrite bool, actor string) func
 			return i18n.Msg{}, i18n.Wrap(err, "job.err.not_gzip")
 		}
 		defer gz.Close()
-		tmp := filepath.Join(a.cfg.TmpDir(), "restore-"+passwd.RandomString(10, "abcdefghijklmnopqrstuvwxyz0123456789"))
+		tmp, err := a.tmpPath(loc, "restore-")
+		if err != nil {
+			return i18n.Msg{}, err
+		}
 		defer os.RemoveAll(tmp)
 		if err := a.svn.Create(ctx, tmp); err != nil {
 			return i18n.Msg{}, err
@@ -182,28 +201,39 @@ func (a *App) jobRestore(file, target string, overwrite bool, actor string) func
 		if err := a.svn.Load(ctx, tmp, gz); err != nil {
 			return i18n.Msg{}, i18n.Wrap(err, "job.err.load")
 		}
-		final := a.repoDir(target)
+		final := a.repoPath(loc, target)
 		trash, placed := "", false
-		err = a.mutate(ctx, actor, "repo.restore", file+" -> "+target, func(tx *sql.Tx) error {
+		err = a.mutate(ctx, actor, "repo.restore", file+" -> "+repoLabel(loc, target), func(tx *sql.Tx) error {
 			var id int64
-			exists := tx.QueryRowContext(ctx, "SELECT id FROM repos WHERE name=?", target).Scan(&id) == nil
+			var txLoc string
+			exists := tx.QueryRowContext(ctx, "SELECT id, location FROM repos WHERE name=?", target).Scan(&id, &txLoc) == nil
+			if exists && txLoc != loc {
+				return i18n.E("job.err.target_changed")
+			}
 			_, statErr := os.Lstat(final)
 			if (exists || statErr == nil) && !overwrite {
 				return i18n.E("job.err.target_exists")
 			}
 			if !exists {
-				if _, err := tx.ExecContext(ctx, "INSERT INTO repos(name, description, created_at) VALUES(?,?,?)",
-					target, a.i18n.For(a.defaultLang(ctx)).T("job.restored_desc", file), store.Now()); err != nil {
+				if err := checkRepoPlacement(ctx, tx, loc, target); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, "INSERT INTO repos(name, location, description, created_at) VALUES(?,?,?,?)",
+					target, loc, a.i18n.For(a.defaultLang(ctx)).T("job.restored_desc", file), store.Now()); err != nil {
 					return err
 				}
 			} else if _, err := tx.ExecContext(ctx, "UPDATE repos SET size_bytes=-1 WHERE id=?", id); err != nil {
 				return err
 			}
 			if statErr == nil {
-				trash = filepath.Join(a.cfg.TmpDir(), "trash-"+target+"-"+passwd.RandomString(8, "abcdefghijklmnopqrstuvwxyz0123456789"))
-				if err := os.Rename(final, trash); err != nil {
+				p, err := a.tmpPath(loc, "trash-"+target+"-")
+				if err != nil {
 					return err
 				}
+				if err := os.Rename(final, p); err != nil {
+					return err
+				}
+				trash = p
 			}
 			if err := os.Rename(tmp, final); err != nil {
 				if trash != "" {

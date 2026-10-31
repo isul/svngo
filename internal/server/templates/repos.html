@@ -8,6 +8,8 @@
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
       <label>{{t "common.name"}} <span class="muted small">({{t "repos.name_hint"}})</span>
         <input name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" placeholder="project"></label>
+      {{if gt (len .D.Locations) 1}}<label>{{t "repo.location"}}
+        <select name="location">{{range .D.Locations}}<option value="{{.Name}}">/{{.Prefix}}/</option>{{end}}</select></label>{{end}}
       <label>{{t "common.description"}}<input name="description" maxlength="200"></label>
       <label class="check"><input type="checkbox" name="layout" value="1"{{if .D.DefaultLayout}} checked{{end}}> {{t "repos.layout"}}</label>
       <div class="row">
@@ -33,7 +35,7 @@
     <tbody>
     {{range .D.Repos}}<tr>
       <td><a href="/admin/repos/{{.Name}}"><strong>{{.Name}}</strong></a>{{with .Description}}<div class="muted small">{{.}}</div>{{end}}
-        <div class="muted small mono">{{$.D.SvnBase}}/{{.Name}}</div></td>
+        <div class="muted small mono">{{.SvnURL}}</div></td>
       <td class="num">{{if ge .Youngest 0}}r{{.Youngest}}{{else}}-{{end}}</td>
       <td class="hide-sm num nowrap">{{size .SizeBytes}}</td>
       {{if $.S.IsAdmin}}<td class="hide-sm num">{{.Rules}}</td>{{end}}

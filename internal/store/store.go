@@ -109,7 +109,20 @@ ALTER TABLE admins ADD COLUMN lang TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT '';
 `
 
-var migrations = []string{schemaV1, schemaV2}
+// schemaV3 adds SVN locations: extra URL paths (/<name>/<repo>) served from
+// <repos>/<name>/. Repositories keep globally unique names; an empty
+// location is the default /svn path.
+const schemaV3 = `
+CREATE TABLE locations (
+	id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE,
+	created_at INTEGER NOT NULL
+);
+ALTER TABLE repos ADD COLUMN location TEXT NOT NULL DEFAULT '';
+CREATE INDEX idx_repos_location ON repos(location);
+`
+
+var migrations = []string{schemaV1, schemaV2, schemaV3}
 
 func Open(path string) (*sql.DB, error) {
 	dsn := "file:" + path + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)" +

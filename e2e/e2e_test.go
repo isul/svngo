@@ -452,3 +452,96 @@ func TestHTTPSVN(t *testing.T) {
 	}
 	fmt.Println("e2e data removed:", repo, alice, bob, group)
 }
+
+// TestHTTPLocations covers extra URL paths (/<location>/<repo>) served by
+// generated <Location> blocks, applied with a graceful restart.
+func TestHTTPLocations(t *testing.T) {
+	waitHealthy(t, 60*time.Second)
+	svn := newSVN(t)
+	tmp := t.TempDir()
+	stamp := time.Now().Format("150405")
+	loc, repo, user, pw := "loc"+stamp, "lr"+stamp, "carol"+stamp, "Carol-Pass-1"
+	locURL, svnURL := baseURL+"/"+loc+"/"+repo, baseURL+"/svn/"+repo
+	step := func(name string) { t.Logf("✔ %s", name) }
+
+	admin := newWeb(t)
+	if st := admin.login(adminUser, adminPass); st != http.StatusSeeOther {
+		t.Fatalf("admin login: %d", st)
+	}
+	before := admin.apache()
+	t.Cleanup(func() {
+		w := newWeb(t)
+		if w.login(adminUser, adminPass) != http.StatusSeeOther {
+			return
+		}
+		w.post("/admin/system/access", url.Values{"admin_allow_ips": {""}, "svn_allow_ips": {""}})
+		w.post("/admin/repos/"+repo+"/delete", url.Values{"confirm": {repo}})
+		w.post("/admin/system/locations/"+loc+"/delete", nil)
+		w.post("/admin/users/"+user+"/delete", nil)
+	})
+
+	admin.ok("/admin/system/locations", url.Values{"name": {loc}})
+	admin.ok("/admin/repos", url.Values{"name": {repo}, "location": {loc}, "layout": {"1"}})
+	admin.ok("/admin/users", url.Values{"username": {user}, "password": {pw}, "password2": {pw}})
+	svn.denied(tmp, "", "", "ls", locURL)
+	svn.denied(tmp, user, pw, "ls", locURL)
+	admin.ok("/admin/repos/"+repo+"/perms", url.Values{"path": {"/"}, "subject": {"user:" + user}, "access": {"rw"}, "back": {"/admin/repos/" + repo + "/perms"}})
+	step("위치 생성, 위치 저장소 생성, 권한 부여")
+
+	wc := filepath.Join(tmp, "wc")
+	svn.must(tmp, user, pw, "checkout", "-q", locURL+"/trunk", wc)
+	os.WriteFile(filepath.Join(wc, "a.txt"), []byte("location\n"), 0o644)
+	svn.must(wc, "", "", "add", "-q", "a.txt")
+	if out := svn.must(wc, user, pw, "commit", "-m", "loc commit"); !strings.Contains(out, "Committed revision 2") {
+		t.Fatalf("commit: %s", out)
+	}
+	svn.must(tmp, user, pw, "copy", "-m", "branch", locURL+"/trunk", locURL+"/branches/b1")
+	if got := svn.must(tmp, user, pw, "cat", locURL+"/branches/b1/a.txt"); got != "location\n" {
+		t.Fatalf("branch content = %q", got)
+	}
+	if out, err := svn.run(tmp, user, pw, "ls", svnURL); err == nil {
+		t.Fatalf("location repository also served under /svn:\n%s", out)
+	}
+	if _, page := admin.get("/admin/repos/" + repo); !strings.Contains(page, "svn checkout "+locURL+"/trunk") {
+		t.Fatal("overview does not show the location URL")
+	}
+	step("위치 URL checkout/commit/서버측 copy")
+
+	// the SVN IP allow list covers location paths but not the admin UI
+	admin.ok("/admin/system/access", url.Values{"admin_allow_ips": {""}, "svn_allow_ips": {"192.0.2.1"}})
+	svn.denied(tmp, user, pw, "ls", locURL)
+	admin.ok("/admin/system/access", url.Values{"admin_allow_ips": {""}, "svn_allow_ips": {""}})
+	svn.must(tmp, user, pw, "ls", locURL)
+	step("SVN IP 허용 목록이 위치 경로에도 적용")
+
+	// moving between /svn and the location switches the served URL
+	admin.ok("/admin/repos/"+repo+"/rename", url.Values{"new_name": {repo}, "location": {""}})
+	svn.must(tmp, user, pw, "ls", svnURL+"/branches/b1")
+	if _, err := svn.run(tmp, user, pw, "ls", locURL); err == nil {
+		t.Fatal("old location URL still served after the move")
+	}
+	admin.ok("/admin/repos/"+repo+"/rename", url.Values{"new_name": {repo}, "location": {loc}})
+	svn.must(wc, user, pw, "update", "-q")
+	step("저장소 위치 이동")
+
+	// a location with repositories cannot be removed; an empty one can
+	if st, page := admin.post("/admin/system/locations/"+loc+"/delete", nil); st != http.StatusSeeOther {
+		t.Fatalf("delete non-empty location: %d", st)
+	} else if _, body := admin.get(page); !reAlertErr.MatchString(body) {
+		t.Fatal("non-empty location removed")
+	}
+	admin.ok("/admin/repos/"+repo+"/delete", url.Values{"confirm": {repo}})
+	admin.ok("/admin/system/locations/"+loc+"/delete", nil)
+	if out, err := svn.run(tmp, user, pw, "ls", baseURL+"/"+loc+"/"+repo); err == nil {
+		t.Fatalf("removed location still served:\n%s", out)
+	}
+	admin.ok("/admin/users/"+user+"/delete", nil)
+
+	if now := admin.apache(); now.PID != before.PID || now.Restarts != before.Restarts {
+		t.Fatalf("Apache process replaced: before=%+v now=%+v", before, now)
+	}
+	if st, body := admin.postBody("/admin/system/sync", nil); st != http.StatusOK || !strings.Contains(body, "모든 검증을 통과했습니다") {
+		t.Fatalf("sync check failed: status %d", st)
+	}
+	step("위치 삭제, Apache 무중단(graceful) 확인")
+}

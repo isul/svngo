@@ -23,7 +23,7 @@
 
 | Area | Features |
 |---|---|
-| Repositories | Create (trunk/branches/tags), rename, delete, enable/disable, verify (`svnadmin verify`), backup (dump.gz) and restore |
+| Repositories | Create (trunk/branches/tags), rename, delete, SVN locations (extra URL paths such as `/android/<repo>`) and moves between them, enable/disable, verify (`svnadmin verify`), backup (dump.gz) and restore |
 | Web browsing | Directory/file views, view at revision, download, commit log, changed files, diff. SVN permissions on every screen |
 | Users & groups | Create, edit, delete, change password, enable/disable, import htpasswd (bcrypt / APR1-MD5) |
 | Permissions | Read / read-write / no access per repository and directory. After save, effective rules are verified with libsvn |
@@ -254,7 +254,7 @@ Stack: Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26
 
 | 영역 | 기능 |
 |---|---|
-| 저장소 | 생성(trunk/branches/tags), 이름 변경, 삭제, 활성/비활성, 검증(`svnadmin verify`), 백업(dump.gz)·복원 |
+| 저장소 | 생성(trunk/branches/tags), 이름 변경, 삭제, SVN 위치(`/android/<저장소>` 같은 추가 URL 경로)와 위치 간 이동, 활성/비활성, 검증(`svnadmin verify`), 백업(dump.gz)·복원 |
 | 웹 브라우징 | 디렉터리/파일 보기, 리비전별 보기, 다운로드, 커밋 로그, 변경 파일, diff. 모든 화면에 SVN 권한 적용 |
 | 사용자·그룹 | 생성, 수정, 삭제, 비밀번호 변경, 활성/비활성, htpasswd 가져오기(bcrypt / APR1-MD5) |
 | 권한 | 저장소·디렉터리 단위 읽기 / 읽기쓰기 / 접근 금지. 저장 후 libsvn으로 실제 적용 결과를 검증 |

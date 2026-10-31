@@ -58,7 +58,7 @@
   <section class="box">
     <h2>{{t "user.effective_title"}}</h2>
     <div class="table-wrap"><table class="table">
-      <tbody>{{range .D.Effective}}<tr><td><a href="/admin/repos/{{.Repo}}">{{.Repo}}</a><div class="muted small mono">{{$.D.SvnBase}}/{{.Repo}}</div></td><td>{{accessLabel .Access}}</td></tr>{{else}}<tr><td class="empty">{{if $u.Enabled}}{{t "user.no_effective"}}{{else}}{{t "user.no_effective_disabled"}}{{end}}</td></tr>{{end}}</tbody>
+      <tbody>{{range .D.Effective}}<tr><td><a href="/admin/repos/{{.Repo}}">{{.Repo}}</a><div class="muted small mono">{{.URL}}</div></td><td>{{accessLabel .Access}}</td></tr>{{else}}<tr><td class="empty">{{if $u.Enabled}}{{t "user.no_effective"}}{{else}}{{t "user.no_effective_disabled"}}{{end}}</td></tr>{{end}}</tbody>
     </table></div>
   </section>
 </div>

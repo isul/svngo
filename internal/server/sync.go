@@ -147,6 +147,7 @@ type SyncReport struct {
 	Users        int
 	MissingDirs  []string
 	Unregistered []string
+	Conflicts    []string // on disk, but the name is used by another repository
 	AccessChecks int
 	AccessErrs   []i18n.Msg
 }
@@ -173,12 +174,14 @@ func (a *App) checkSync(ctx context.Context) (SyncReport, error) {
 	} else {
 		rep.AuthzValid = true
 	}
-	for name := range pol.Repos {
-		if !svn.IsRepoDir(filepath.Join(a.cfg.ReposDir, name)) {
-			rep.MissingDirs = append(rep.MissingDirs, name)
+	locs := a.repoLocations(ctx)
+	for _, name := range slices.Sorted(maps.Keys(pol.Repos)) {
+		if !svn.IsRepoDir(a.repoPath(locs[name], name)) {
+			rep.MissingDirs = append(rep.MissingDirs, repoLabel(locs[name], name))
 		}
 	}
-	rep.Unregistered = a.unregisteredRepos(ctx)
+	found, conflicts := a.scanRepos(ctx)
+	rep.Unregistered, rep.Conflicts = repoLabels(found), repoLabels(conflicts)
 	if rep.AuthzValid && a.svn.Authz != "" {
 		n := 0
 	outer:

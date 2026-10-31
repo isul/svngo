@@ -132,6 +132,9 @@ func (a *App) Run(ctx context.Context) error {
 		if err := a.initSvnAllow(ctx); err != nil {
 			return err
 		}
+		if err := a.initLocations(ctx); err != nil {
+			return err
+		}
 		a.apache = apache.New(a.cfg, a.apLogs)
 		a.apache.OnAuthFail = a.svnGuard.Fail
 		if err := a.apache.Check(ctx); err != nil {
@@ -181,10 +184,21 @@ func (a *App) init(ctx context.Context) error {
 	a.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at < ?", store.Now())
 	os.RemoveAll(a.cfg.TmpDir())
 	os.MkdirAll(a.cfg.TmpDir(), 0o750)
+	locs, err := locationNames(ctx, a.db)
+	if err != nil {
+		return err
+	}
+	for _, l := range locs {
+		os.RemoveAll(a.tmpDir(l))
+	}
 	if n, err := a.registerRepos(ctx, "system"); err != nil {
 		return err
 	} else if n > 0 {
 		slog.Info("existing repositories registered", "count", n)
+	}
+	if _, conflicts := a.scanRepos(ctx); len(conflicts) > 0 {
+		slog.Warn("repositories not registered because the name is already used in another location",
+			"repos", strings.Join(repoLabels(conflicts), ", "))
 	}
 	// Regenerate files from the DB so a crash between steps can never leave
 	// Apache with stale credentials.
@@ -232,44 +246,20 @@ func (a *App) ensureAdmin(ctx context.Context) error {
 	return nil
 }
 
-func (a *App) unregisteredRepos(ctx context.Context) []string {
-	ents, err := os.ReadDir(a.cfg.ReposDir)
-	if err != nil {
-		return nil
-	}
-	known := map[string]bool{}
-	rows, err := a.db.QueryContext(ctx, "SELECT name FROM repos")
-	if err != nil {
-		return nil
-	}
-	for rows.Next() {
-		var n string
-		rows.Scan(&n)
-		known[n] = true
-	}
-	rows.Close()
-	var res []string
-	for _, e := range ents {
-		if e.IsDir() && !known[e.Name()] && validate.RepoName(e.Name()) == nil && svn.IsRepoDir(filepath.Join(a.cfg.ReposDir, e.Name())) {
-			res = append(res, e.Name())
-		}
-	}
-	return res
-}
-
-// registerRepos adds repositories found on disk but missing in the DB.
+// registerRepos adds repositories found on disk (in every location) but
+// missing in the DB.
 func (a *App) registerRepos(ctx context.Context, actor string) (int, error) {
-	names := a.unregisteredRepos(ctx)
-	if len(names) == 0 {
+	found, _ := a.scanRepos(ctx)
+	if len(found) == 0 {
 		return 0, nil
 	}
-	err := a.mutate(ctx, actor, "repo.scan", strings.Join(names, ", "), func(tx *sql.Tx) error {
-		for _, n := range names {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO repos(name, created_at) VALUES(?,?)", n, store.Now()); err != nil {
+	err := a.mutate(ctx, actor, "repo.scan", strings.Join(repoLabels(found), ", "), func(tx *sql.Tx) error {
+		for _, f := range found {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO repos(name, location, created_at) VALUES(?,?,?)", f.Name, f.Location, store.Now()); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
-	return len(names), err
+	return len(found), err
 }

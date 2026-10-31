@@ -21,7 +21,7 @@ var (
 	reTmplKey    = regexp.MustCompile(`[{(]-?\s*(?:t|th)\s+"([^"]+)"`)
 	reGoKey      = regexp.MustCompile(`i18n\.(?:M|E)\("([^"]+)"|i18n\.Wrap\([^,]+, "([^"]+)"|\.(?:T|TOr)\("([^"]+)"|Key: "([^"]+)"`)
 	reI18nPkgKey = regexp.MustCompile(`\b(?:M|E)\("([^"]+)"|Wrap\([^,]+, "([^"]+)"`)
-	reAction     = regexp.MustCompile(`"((?:login|admin|repo|user|group|rule|settings|sync|backup|job|svn|locale|allowip)\.[a-z]+(?:\.[a-z]+)?)"`)
+	reAction     = regexp.MustCompile(`"((?:login|admin|repo|user|group|rule|settings|sync|backup|job|svn|locale|allowip|location)\.[a-z]+(?:\.[a-z]+)?)"`)
 )
 
 func collect(t *testing.T, glob string, re *regexp.Regexp, line func(string) bool, keys map[string]string) {
@@ -209,7 +209,7 @@ func TestLanguageResolution(t *testing.T) {
 	if msg := admin.postErr("/admin/system/settings", withValues(settingsForm, "default_lang", "zz")); !strings.Contains(msg, "알 수 없는 언어") {
 		t.Fatalf("unknown default language accepted: %q", msg)
 	}
-	admin.postOK("/admin/system/settings", settingsForm) // a form without default_lang keeps it
+	admin.postOK("/admin/system/settings", withValues(settingsForm)) // a form without default_lang keeps it
 	if got := store.Setting(t.Context(), e.app.db, "default_lang"); got != "ko" {
 		t.Fatalf("default_lang = %q", got)
 	}

@@ -104,12 +104,14 @@ func (a *App) systemView(r *http.Request) *View {
 	for k := range store.SettingDefaults {
 		settings[k] = store.Setting(ctx, a.db, k)
 	}
+	found, conflicts := a.scanRepos(ctx)
 	return &View{Title: i18n.M("nav.system"), Nav: "system", Tab: "status", D: map[string]any{
 		"Version": Version, "GoVersion": runtime.Version(), "Uptime": time.Since(a.started).Round(time.Second).String(),
 		"MemAlloc": int64(ms.HeapAlloc), "MemSys": int64(ms.Sys), "Goroutines": runtime.NumGoroutine(),
 		"Apache": a.apacheStatus(), "Versions": versions, "Disk": diskUsage(a.cfg.ReposDir), "BackupDisk": diskUsage(a.cfg.BackupDir),
 		"DBSize": dbSize, "Admins": admins, "Settings": settings, "Cfg": a.cfg, "AuthzTool": a.svn.Authz, "SvnBlocked": a.svnGuard.List(),
-		"Unregistered": a.unregisteredRepos(ctx), "SvnBase": a.svnBaseURL(r),
+		"Unregistered": repoLabels(found), "Conflicts": repoLabels(conflicts),
+		"Locations": a.locationRows(r), "LocationCandidates": a.locationCandidates(ctx),
 		"Langs": a.i18n.List(), "DefaultLang": a.defaultLang(ctx), "LocaleErrors": a.i18n.LoadErrors(),
 		"LocalesDir": a.cfg.LocalesDir(), "Allow": a.allowView(r),
 	}}
@@ -274,6 +276,7 @@ func (a *App) handleBackups(w http.ResponseWriter, r *http.Request, s *Session) 
 	jobs, _ := a.listJobs(ctx, "", 20)
 	a.render(w, r, s, http.StatusOK, "backups", &View{Title: i18n.M("system.tab.backups"), Nav: "system", Tab: "backups", D: map[string]any{
 		"Backups": backups, "Jobs": jobs, "Repos": a.repoNames(ctx), "Disk": diskUsage(a.cfg.BackupDir),
+		"Locations": a.locationRows(r),
 	}})
 }
 
@@ -315,6 +318,7 @@ func (a *App) handleBackupDelete(w http.ResponseWriter, r *http.Request, s *Sess
 func (a *App) handleRestore(w http.ResponseWriter, r *http.Request, s *Session) {
 	file := r.PostFormValue("file")
 	target := strings.TrimSpace(r.PostFormValue("target"))
+	loc := r.PostFormValue("location")
 	overwrite := r.PostFormValue("overwrite") == "1"
 	err := func() error {
 		if err := validate.BackupName(file); err != nil {
@@ -326,10 +330,13 @@ func (a *App) handleRestore(w http.ResponseWriter, r *http.Request, s *Session) 
 		if err := validate.RepoName(target); err != nil {
 			return err
 		}
+		if err := checkLocation(r.Context(), a.db, loc); err != nil {
+			return err
+		}
 		if overwrite && r.PostFormValue("confirm") != target {
 			return i18n.E("backup.err.confirm_overwrite")
 		}
-		_, err := a.startJob(s.Username, "restore", target, a.jobRestore(file, target, overwrite, s.Username))
+		_, err := a.startJob(s.Username, "restore", target, a.jobRestore(file, target, loc, overwrite, s.Username))
 		return err
 	}()
 	a.done(w, r, "/admin/system/backups", i18n.M("backup.restore_started"), err)

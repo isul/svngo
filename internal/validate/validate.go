@@ -26,6 +26,23 @@ func RepoName(s string) error {
 	return nil
 }
 
+// reservedLocations are URL paths served by SvnGo itself.
+var reservedLocations = []string{"admin", "svn"}
+
+// LocationName checks an SVN location name; it becomes both the URL path
+// (/<name>/<repo>) and the folder name under the repository folder.
+func LocationName(s string) error {
+	if !reRepoName.MatchString(s) || strings.HasSuffix(s, ".") {
+		return i18n.E("valid.location_name")
+	}
+	for _, r := range reservedLocations {
+		if strings.EqualFold(s, r) {
+			return i18n.E("valid.location_reserved", s)
+		}
+	}
+	return nil
+}
+
 func Username(s string) error {
 	if !reUsername.MatchString(s) {
 		return i18n.E("valid.username")

@@ -16,6 +16,7 @@ Go로 작성한 경량 Subversion(SVN) 서버 및 웹 관리 시스템입니다.
                        ┌──────────────────── SvnGo 컨테이너 (non-root, uid 1000) ─────────────────────┐
  svn 클라이언트 ─HTTP(S)─▶ Apache httpd :8080 / :8443                                                  │
  웹 브라우저            │   ├─ /svn/<저장소>  mod_dav_svn + mod_authz_svn + mod_auth_basic/authn_file   │
+                       │   ├─ /<위치>/<저장소>  동일, SVN 위치마다 <Location> 자동 생성                 │
                        │   │                  (htpasswd: bcrypt, authz: 경로별 권한)                     │
                        │   └─ /admin         reverse proxy ──▶ Go 관리 서버 127.0.0.1:9000           │
                        │                                         ├─ SQLite (WAL) : 단일 진실 원천     │
@@ -35,12 +36,12 @@ Go로 작성한 경량 Subversion(SVN) 서버 및 웹 관리 시스템입니다.
 | 영역 | 기능 |
 |---|---|
 | 대시보드 | 저장소/사용자/그룹/권한 수, Apache 상태, 디스크 사용량, 최근 작업과 변경 이력 |
-| 저장소 | 생성(trunk/branches/tags 선택), 목록·검색·페이징, 이름 변경, 삭제(이름 재입력 확인), 활성/비활성, UUID·리비전·크기(캐시), 검증(`svnadmin verify`), 백업(dump.gz)·복원 |
+| 저장소 | 생성(trunk/branches/tags 선택), 목록·검색·페이징, 이름 변경, SVN 위치 간 이동, 삭제(이름 재입력 확인), 활성/비활성, UUID·리비전·크기(캐시), 검증(`svnadmin verify`), 백업(dump.gz)·복원 |
 | 웹 브라우징 | 디렉터리/파일 보기, 리비전 지정 보기, 원본 다운로드(스트리밍), 커밋 로그(페이징), 변경 파일, diff, 작성자·메시지. 모든 화면에 SVN 권한이 적용됩니다. |
 | 사용자 | 생성, 수정, 삭제, 비밀번호 변경, 임시 비밀번호 발급, 활성/비활성, 검색, htpasswd 가져오기(bcrypt/APR1) |
 | 그룹 | 생성, 수정, 삭제, 멤버 추가·제거 |
 | 권한 | 저장소·디렉터리 단위 읽기/읽기쓰기/접근 금지. 대상은 사용자, 그룹, 인증된 모든 사용자(`$authenticated`), 모든 사용자(`*`). 저장 후 libsvn으로 실제 적용 결과를 검증하며, 권한 확인 도구로 즉시 확인할 수 있습니다. |
-| 시스템 설정 | SVN 기본 URL, 기본 레이아웃, 페이지 크기, 로그인 시도 제한, 관리 UI·SVN 접근 허용 IP, 관리자 계정 관리, 인증 파일 동기화 검증·재생성, 저장소 디렉터리 스캔(등록) |
+| 시스템 설정 | SVN 기본 URL, SVN 위치(`/android/<저장소>` 같은 추가 URL 경로), 기본 레이아웃, 페이지 크기, 로그인 시도 제한, 관리 UI·SVN 접근 허용 IP, 관리자 계정 관리, 인증 파일 동기화 검증·재생성, 저장소 디렉터리 스캔(등록) |
 | 백업 | 백업 목록·다운로드·삭제·업로드, 새 저장소로 복원 또는 덮어쓰기 복원 |
 | 로그 | 감사 로그(누가 무엇을 바꿨는지), 애플리케이션 로그, Apache 로그 |
 | 다국어 | 영어·한국어 기본 제공, 브라우저 언어 자동 선택, 내 계정에서 언어 고정, 시스템 기본 언어, 언어 파일(JSON) 추가·업로드·다운로드 |
@@ -565,7 +566,7 @@ docker compose cp .\ja.json svngo:/data/config/locales/ja.json
 | 목록 | 적용 범위 | 차단 위치 | 반영 시점 |
 |---|---|---|---|
 | 관리 UI | `/admin` 전체(웹 관리자와 SVN 사용자의 웹 로그인 모두) | Go 관리 서버, 403 안내 화면 | 저장 즉시 |
-| SVN | `/svn`(checkout, commit 등 svn 클라이언트) | Apache, **인증 전에** 403 | 저장 즉시(Apache graceful 재시작) |
+| SVN | `/svn`과 모든 [SVN 위치](#svn-위치-여러-url-경로)(`/admin`을 제외한 모든 경로, checkout, commit 등 svn 클라이언트) | Apache, **인증 전에** 403 | 저장 즉시(Apache graceful 재시작) |
 
 **설정 방법**
 
@@ -599,6 +600,45 @@ docker compose exec svngo svngo access-reset all     # 둘 다
 
 **주의**: 클라이언트 IP는 Apache가 본 접속 주소입니다. Docker Desktop(Windows/macOS)이나 NAT, 리버스 프록시 뒤에서는 모든 클라이언트가 같은 주소(예: `172.17.0.1`, 프록시 IP)로 보일 수 있습니다. 화면의 **현재 접속 IP**가 실제 PC 주소와 다르면 IP 제한으로 클라이언트를 구분할 수 없으니, 호스트 방화벽이나 프록시에서 제한하세요.
 
+## SVN 위치 (여러 URL 경로)
+
+저장소는 기본적으로 `/svn/<저장소>`로 제공됩니다. **SVN 위치**를 추가하면 repos 볼륨 안의 같은 이름 폴더에 있는 저장소를 다른 URL 경로로 제공합니다. 여러 `<Location>` 블록을 쓰던 기존 서버의 URL을 그대로 유지할 수 있습니다.
+
+| URL | 폴더 |
+|---|---|
+| `/svn/<저장소>` (기본) | `/data/repos/<저장소>` |
+| `/android/<저장소>` | `/data/repos/android/<저장소>` |
+| `/hw/<저장소>` | `/data/repos/hw/<저장소>` |
+
+```
+/data/repos/            ← 기본 위치 (/svn)
+├── myrepo/             → /svn/myrepo
+├── android/            ← 위치 "android"
+│   ├── app/            → /android/app
+│   └── launcher/       → /android/launcher
+└── hw/                 ← 위치 "hw"
+    └── board/          → /hw/board
+```
+
+**위치 관리** (**시스템 설정 → SVN 위치**)
+
+- **추가**: 이름을 입력합니다. 폴더가 없으면 만들고, 이미 들어 있는 저장소는 함께 등록합니다. Apache 설정을 검사(`httpd -t`)한 뒤 graceful 재시작으로 적용하므로 진행 중인 checkout·commit이 끊기지 않고 Apache PID도 바뀌지 않습니다. 검사에 실패하면 아무것도 바뀌지 않습니다.
+- repos 볼륨에 저장소가 들어 있지만 위치로 등록되지 않은 폴더가 있으면 **/<이름> 등록** 버튼이 표시됩니다.
+- **삭제**: 위치에 저장소가 하나도 없을 때만 가능합니다. 폴더는 비어 있을 때만 함께 지웁니다.
+- 위치 이름은 바꿀 수 없습니다. 이름 규칙은 저장소 이름과 같고 `admin`, `svn`은 사용할 수 없습니다.
+
+**규칙**
+
+- **저장소 이름은 모든 위치에서 고유합니다.** 권한(`authz`), 웹 UI(`/admin/repos/<이름>`), 백업은 저장소를 이름만으로 구분합니다. mod_authz_svn은 `[repo:/path]`를 폴더 이름으로 찾으므로 `authz`와 `htpasswd` 하나로 모든 위치를 처리합니다.
+- `/svn` 저장소는 위치 이름과 같은 이름을 쓸 수 없고, 같은 이름의 `/svn` 저장소가 있으면 그 이름으로 위치를 추가할 수 없습니다.
+- 다른 위치에 이미 등록된 저장소와 이름이 같은 폴더는 등록하지 않고, 시스템 설정과 동기화 검증에서 **이름 충돌**로 알려 줍니다.
+- 저장소 **생성** 화면에서 위치를 선택할 수 있습니다. **이동**은 저장소 **설정** 화면의 **이름 변경 / 이동**에서 합니다. 기존 작업 복사본은 `svn relocate`가 필요합니다.
+- 새 저장소로 **복원**할 때 위치를 선택합니다. 기존 저장소를 덮어쓰면 그 저장소의 위치를 유지합니다.
+- SVN 접근 IP 제한과 SVN 무차별 대입 차단은 모든 SVN 경로(`/admin`을 제외한 전부)에 적용됩니다.
+- **SVN 기본 URL**을 설정한 경우(예: `https://svn.example.com/svn`) 다른 위치의 URL은 끝의 `/svn`을 위치 이름으로 바꿔 표시합니다(`https://svn.example.com/android/...`).
+- 위치 폴더는 `/data/repos`와 같은 볼륨에 두세요. 위치마다 작업 폴더(`.svngo-tmp`)를 따로 쓰므로 생성·복원은 어느 마운트에서도 되지만, 위치 간 이동은 이름 변경(rename)이라 마운트가 다르면 실패합니다.
+- 외부 Apache를 쓰는 경우(`SVNGO_MANAGE_APACHE` 끔) 위치마다 `/svn`과 같은 지시어로 `<Location /<이름>>` 블록(`SVNParentPath /data/repos/<이름>`)을 직접 추가해야 합니다.
+
 ## 기존 SVN 서버에서 이전하기
 
 1. **저장소**: 기존 저장소 디렉터리를 repos 볼륨에 복사합니다. 웹 UI의 **시스템 설정**에 등록되지 않은 저장소가 있다는 경고가 나오면 **등록**을 누릅니다. 서버를 시작할 때도 자동으로 스캔해 등록합니다.
@@ -606,6 +646,8 @@ docker compose exec svngo svngo access-reset all     # 둘 다
    docker compose cp .\old-repos\myrepo svngo:/data/repos/myrepo
    ```
    또는 `svnadmin dump` 파일을 **백업** 화면에서 업로드한 뒤 새 저장소로 복원합니다(.svndump / .svndump.gz).
+
+   기존 서버가 여러 `<Location>` 블록을 쓰는 경우(예: `/android` → `SVNParentPath /var/svn/android`) 각 상위 폴더를 같은 이름의 폴더(`/data/repos/android/`)로 복사하고 **시스템 설정 → SVN 위치**에서 등록합니다(**/android 등록** 버튼도 가능). URL이 그대로이므로 작업 복사본은 호스트나 포트가 바뀔 때만 `svn relocate`가 필요합니다. 폴더 이름이 URL 경로와 다르면(예: `/delphi` → `SVNParentPath /var/svn/delphi/src`) 폴더 이름을 경로에 맞춰(`/data/repos/delphi/`) 복사하고, 저장소 이름이 모든 위치에서 고유한지 먼저 확인하세요.
 2. **사용자**: **사용자 → htpasswd 가져오기**에 기존 htpasswd 내용을 붙여 넣거나 파일을 업로드합니다. bcrypt와 APR1-MD5(`$apr1$`) 해시를 지원합니다. APR1 사용자는 SVN에 그대로 접속할 수 있고, 웹에 한 번 로그인하면 bcrypt로 자동 전환됩니다. SHA1/crypt/평문 항목은 보안상 가져오지 않습니다.
 3. **권한**: 웹 UI에서 그룹과 권한 규칙을 다시 설정합니다. `authz` 파일은 DB에서 자동 생성하므로 직접 수정하지 마세요. 직접 수정한 내용은 다음 변경 때 덮어씁니다.
 
@@ -635,7 +677,7 @@ docker compose exec svngo svngo access-reset all     # 둘 다
   - Apache를 재시작하지 않고 바로 적용되며, 시스템 설정 화면에서 차단 목록을 보고 해제할 수 있습니다.
   - 차단과 해제는 감사 로그에 기록됩니다.
 - **접근 IP 제한**: 관리 UI와 SVN에 각각 허용 IP/CIDR 목록을 둘 수 있습니다. SVN은 Apache가 인증 전에 403으로 거부하고, 관리 UI는 모든 화면과 로그인 요청을 Go 서버가 거부합니다. 저장된 목록이 손상되면 루프백만 허용하는 쪽으로 동작합니다(fail-closed). 자세한 내용은 [접근 IP 제한](#접근-ip-제한)을 참고하세요.
-- **요청 크기 제한**: `/svn` 본문과 XML 요청 크기를 제한합니다. 그 밖의 경로는 1MB까지만 받고, 관리 화면은 Go 서버가 기능별로 제한합니다.
+- **요청 크기 제한**: SVN 요청(`/svn`과 SVN 위치)의 본문과 XML 요청 크기를 제한합니다. 그 밖의 경로는 1MB까지만 받고, 관리 화면은 Go 서버가 기능별로 제한합니다.
 - **authz 검증 강제**: 시작할 때 검증 도구를 자체 점검합니다. 정상 파일은 통과시키고, 잘못된 파일은 거부하고, 권한을 올바르게 평가하는지 확인합니다. 하나라도 실패하면 서버가 시작되지 않으며, 검증 없이 인증 파일을 적용하는 경로는 없습니다.
 - **보안 헤더**: CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP, HSTS(HTTPS)를 보냅니다.
 - **컨테이너**: non-root(uid 1000)로 실행하며 읽기 전용 루트 파일시스템, `cap_drop: ALL`, `no-new-privileges`를 적용합니다. PID 1은 tini입니다.
@@ -694,6 +736,7 @@ E2E는 다음 항목을 실제 `svn` 명령으로 검증합니다.
 10. Apache 재시작 없이 신규 저장소 접근(PID와 재시작 횟수 비교)
 11. 웹 UI 커밋 이력과 diff
 12. `docker compose restart` 후 데이터 유지
+13. SVN 위치: 위치 추가, `/<위치>/<저장소>` checkout·commit·서버 측 copy, 위치 경로의 SVN 접근 IP 제한, 위치 간 이동, 위치 삭제(Apache PID 유지)
 
 ## 디렉터리 구조
 

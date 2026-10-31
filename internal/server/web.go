@@ -528,6 +528,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /admin/system/sync", A(a.handleSyncCheck))
 	mux.HandleFunc("POST /admin/system/repair", A(a.handleSyncRepair))
 	mux.HandleFunc("POST /admin/system/scan", A(a.handleRepoScan))
+	mux.HandleFunc("POST /admin/system/locations", A(a.handleLocationCreate))
+	mux.HandleFunc("POST /admin/system/locations/{name}/delete", A(a.handleLocationDelete))
 	mux.HandleFunc("POST /admin/system/admins", A(a.handleAdminCreate))
 	mux.HandleFunc("POST /admin/system/admins/{id}/delete", A(a.handleAdminDelete))
 	mux.HandleFunc("GET /admin/system/backups", A(a.handleBackups))
@@ -581,18 +583,6 @@ func (a *App) isSecure(r *http.Request) bool {
 		return false
 	}
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
-}
-
-// svnBaseURL returns the base URL shown to users for checkout.
-func (a *App) svnBaseURL(r *http.Request) string {
-	if v := strings.TrimRight(store.Setting(r.Context(), a.db, "svn_base_url"), "/"); v != "" {
-		return v
-	}
-	scheme := "http"
-	if a.isSecure(r) {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host + "/svn"
 }
 
 func (a *App) pageSize(r *http.Request) int {

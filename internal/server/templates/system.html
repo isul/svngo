@@ -25,7 +25,7 @@
       <dt>DB</dt><dd class="mono">{{.D.Cfg.DBDir}}</dd>
       <dt>{{t "system.path_backups"}}</dt><dd class="mono">{{.D.Cfg.BackupDir}}</dd>
       <dt>{{t "system.path_locales"}}</dt><dd class="mono">{{.D.LocalesDir}}</dd>
-      <dt>SVN URL</dt><dd class="mono">{{.D.SvnBase}}/&lt;{{t "common.repo"}}&gt;</dd>
+      <dt>SVN URL</dt><dd class="mono">{{range .D.Locations}}<div>{{.URL}}/&lt;{{t "common.repo"}}&gt;</div>{{end}}</dd>
       <dt>{{t "system.admin_ui"}}</dt><dd class="mono">/admin</dd>
     </dl>
   </section>
@@ -50,6 +50,7 @@
     <dt>{{t "sync.access_cross"}}</dt><dd>{{t "sync.checked" .AccessChecks}}{{range .AccessErrs}}<div class="text-err small">{{msg .}}</div>{{end}}</dd>
     {{if .MissingDirs}}<dt>{{t "sync.missing_dirs"}}</dt><dd class="text-err">{{join .MissingDirs ", "}}</dd>{{end}}
     {{if .Unregistered}}<dt>{{t "sync.unregistered"}}</dt><dd>{{join .Unregistered ", "}}</dd>{{end}}
+    {{if .Conflicts}}<dt>{{t "sync.conflicts"}}</dt><dd class="text-err">{{join .Conflicts ", "}}</dd>{{end}}
   </dl>
   {{end}}
   {{if .D.Unregistered}}
@@ -57,6 +58,34 @@
     <form method="post" action="/admin/system/scan" class="inline"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="btn sm">{{t "sync.register"}}</button></form>
   </div>
   {{end}}
+</section>
+
+<section class="box" id="locations">
+  <h2>{{t "location.title"}} <span class="count">{{len .D.Locations}}</span></h2>
+  <p class="muted small">{{t "location.hint"}}</p>
+  {{if not .D.Cfg.ManageApache}}<div class="alert warn">{{t "location.unmanaged"}}</div>{{end}}
+  {{if .D.Conflicts}}<div class="alert warn">{{t "sync.conflicts_found" (join .D.Conflicts ", ")}}</div>{{end}}
+  {{if .D.LocationCandidates}}
+  <div class="alert warn">{{t "location.candidates"}}
+    {{range .D.LocationCandidates}}<form method="post" action="/admin/system/locations" class="inline"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.}}"><button class="btn sm">{{t "location.register" .}}</button></form> {{end}}
+  </div>
+  {{end}}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>{{t "location.col.url"}}</th><th class="hide-sm">{{t "location.col.dir"}}</th><th class="num">{{t "location.col.repos"}}</th><th></th></tr></thead>
+    <tbody>{{range .D.Locations}}<tr>
+      <td><span class="mono">/{{.Prefix}}/</span>{{if not .Name}} <span class="badge">{{t "location.default"}}</span>{{end}}
+        <div class="muted small mono">{{.URL}}/&lt;{{t "common.repo"}}&gt;</div></td>
+      <td class="hide-sm mono small">{{.Dir}}</td>
+      <td class="num">{{.Repos}}</td>
+      <td class="right">{{if and .Name (not .Repos)}}<form method="post" action="/admin/system/locations/{{.Name}}/delete" class="inline" hx-confirm="{{t "location.delete_confirm" .Name}}"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="btn sm danger">{{t "common.delete"}}</button></form>{{end}}</td>
+    </tr>{{end}}</tbody>
+  </table></div>
+  <form method="post" action="/admin/system/locations" class="form row-form">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <label>{{t "location.name"}}<input name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" placeholder="android" autocomplete="off"></label>
+    <button class="btn primary">{{t "location.add"}}</button>
+  </form>
+  <p class="muted small">{{t "location.name_hint"}}</p>
 </section>
 
 <section class="box">

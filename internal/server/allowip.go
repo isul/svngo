@@ -122,10 +122,11 @@ func (a *App) syncSvnAllow(ctx context.Context) error {
 }
 
 // svnAllowLoop picks up changes made outside the web UI (svngo access-reset)
-// and retries failed applies.
+// and retries failed applies of the IP allow list and the SVN locations.
 func (a *App) svnAllowLoop(ctx context.Context) {
 	t := time.NewTicker(allowSyncInterval)
 	defer t.Stop()
+	locErr := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,6 +141,15 @@ func (a *App) svnAllowLoop(ctx context.Context) {
 				slog.Error("applying the SVN IP allow list failed", "err", err)
 			}
 			a.allow.svnErr = msg
+
+			msg = ""
+			if err := a.applyLocations(ctx, a.db); err != nil {
+				msg = err.Error()
+			}
+			if msg != locErr && msg != "" {
+				slog.Error("applying the SVN locations failed", "err", msg)
+			}
+			locErr = msg
 		}
 	}
 }

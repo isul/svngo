@@ -25,7 +25,7 @@ const (
 
 // resolveRev parses ?rev= and returns it bounded by the youngest revision.
 func (a *App) resolveRev(r *http.Request, repo *RepoRow) (int64, error) {
-	youngest, err := a.svn.Youngest(r.Context(), a.repoDir(repo.Name))
+	youngest, err := a.svn.Youngest(r.Context(), repo.Dir)
 	if err != nil {
 		return 0, err
 	}
@@ -62,7 +62,7 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request, s *Session) {
 		a.notFound(w, r, s)
 		return
 	}
-	dir := a.repoDir(repo.Name)
+	dir := repo.Dir
 	info, err := a.svn.NodeInfo(ctx, dir, p, rev)
 	if err != nil {
 		if svn.IsNotFound(err) {
@@ -74,7 +74,7 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request, s *Session) {
 	}
 	v := &View{Title: i18n.Raw(repo.Name + p), Nav: "repos", Tab: "files", Repo: repo, D: map[string]any{
 		"Path": p, "Rev": rev, "Info": info, "Pinned": r.URL.Query().Get("rev") != "",
-		"SvnURL": a.svnBaseURL(r) + "/" + repo.Name + escapeRepoPath(p),
+		"SvnURL": a.svnRepoURL(r, repo.Location, repo.Name) + escapeRepoPath(p),
 	}}
 
 	if info.Kind == "dir" {
@@ -158,7 +158,7 @@ func (a *App) handleRaw(w http.ResponseWriter, r *http.Request, s *Session) {
 		a.notFound(w, r, s)
 		return
 	}
-	dir := a.repoDir(repo.Name)
+	dir := repo.Dir
 	size, err := a.svn.FileSize(r.Context(), dir, p, rev)
 	if err != nil {
 		a.notFound(w, r, s)
@@ -221,7 +221,7 @@ func (a *App) handleCommits(w http.ResponseWriter, r *http.Request, s *Session) 
 		a.notFound(w, r, s)
 		return
 	}
-	dir := a.repoDir(repo.Name)
+	dir := repo.Dir
 	youngest, err := a.svn.Youngest(ctx, dir)
 	if err != nil {
 		a.errorPage(w, r, s, 500, err)
@@ -320,7 +320,7 @@ func (a *App) handleCommit(w http.ResponseWriter, r *http.Request, s *Session) {
 		return
 	}
 	ctx := r.Context()
-	dir := a.repoDir(repo.Name)
+	dir := repo.Dir
 	youngest, err := a.svn.Youngest(ctx, dir)
 	if err != nil {
 		a.errorPage(w, r, s, 500, err)
@@ -411,7 +411,7 @@ func (a *App) handleRawDiff(w http.ResponseWriter, r *http.Request, s *Session) 
 		return
 	}
 	ctx := r.Context()
-	dir := a.repoDir(repo.Name)
+	dir := repo.Dir
 	youngest, err := a.svn.Youngest(ctx, dir)
 	if err != nil {
 		a.errorPage(w, r, s, 500, err)

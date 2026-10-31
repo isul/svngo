@@ -32,6 +32,8 @@
       <label>{{t "backups.restore_target"}} <span class="muted small">({{t "backups.restore_target_hint"}})</span>
         <input name="target" required maxlength="64" list="repo-names" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}"></label>
       <datalist id="repo-names">{{range .D.Repos}}<option value="{{.}}">{{end}}</datalist>
+      {{if gt (len .D.Locations) 1}}<label>{{t "backups.restore_location"}}
+        <select name="location">{{range .D.Locations}}<option value="{{.Name}}">/{{.Prefix}}/</option>{{end}}</select></label>{{end}}
       <label class="check"><input type="checkbox" name="overwrite" value="1"> {{t "backups.overwrite"}}</label>
       <label>{{t "backups.overwrite_confirm"}}<input name="confirm" maxlength="64" autocomplete="off"></label>
       <button class="btn primary">{{t "backups.restore_start"}}</button>

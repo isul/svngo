@@ -249,16 +249,17 @@ func (a *App) renderUserEdit(w http.ResponseWriter, r *http.Request, s *Session,
 	}
 	direct, _ := authz.ListRules(ctx, a.db, "", u.Username)
 	pol := a.policy.Load()
-	type eff struct{ Repo, Access string }
+	locs := a.repoLocations(ctx)
+	type eff struct{ Repo, Access, URL string }
 	var effective []eff
 	for _, repo := range slices.Sorted(maps.Keys(pol.Repos)) {
 		if acc := pol.Access(repo, "/", u.Username); acc != "no" {
-			effective = append(effective, eff{repo, acc})
+			effective = append(effective, eff{repo, acc, a.svnRepoURL(r, locs[repo], repo)})
 		}
 	}
 	a.render(w, r, s, http.StatusOK, "user_edit", &View{Title: i18n.Raw(u.Username), Nav: "users", D: map[string]any{
 		"User": u, "Groups": groups, "Member": member, "Rules": direct, "Effective": effective,
-		"TempPassword": tempPassword, "SvnBase": a.svnBaseURL(r),
+		"TempPassword": tempPassword,
 	}})
 }
 
