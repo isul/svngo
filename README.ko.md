@@ -140,7 +140,7 @@ Go로 작성한 경량 Subversion(SVN) 서버 및 웹 관리 시스템입니다.
 
 | 태그 | 플랫폼 | 설명 |
 |---|---|---|
-| `1.1.0` | linux/amd64 | 버전 고정. 운영 환경에 권장 |
+| `1.1.1` | linux/amd64 | 버전 고정. 운영 환경에 권장 |
 | `latest` | linux/amd64 | 가장 최근 릴리스 |
 
 - 구성: Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26
@@ -159,7 +159,7 @@ docker run -d --name svngo --restart unless-stopped `
   --tmpfs "/tmp:size=64m,mode=1777" `
   --cap-drop ALL `
   --security-opt "no-new-privileges:true" `
-  isul/svngo:1.1.0
+  isul/svngo:1.1.1
 ```
 
 PowerShell은 따옴표 없는 쉼표를 배열 구분자로 해석하므로 `--tmpfs` 값은 따옴표로 감쌉니다. 각 옵션의 의미는 [컨테이너 보안 옵션](#컨테이너-보안-옵션)을 참고하세요.
@@ -171,7 +171,7 @@ PowerShell은 따옴표 없는 쉼표를 배열 구분자로 해석하므로 `--
 ```yaml
 services:
   svngo:
-    image: isul/svngo:1.1.0
+    image: isul/svngo:1.1.1
 ```
 
 ```powershell
@@ -752,7 +752,7 @@ docker compose exec svngo svngo version
 ### 멀티 아키텍처 빌드
 
 ```powershell
-docker buildx build --platform linux/amd64,linux/arm64 -t <레지스트리>/svngo:1.1.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t <레지스트리>/svngo:1.1.1 --push .
 ```
 
 ## 테스트
@@ -828,6 +828,7 @@ README.ko.md       한국어 문서 (이 문서)
 
 | 버전 | 변경 내용 |
 |---|---|
+| 1.1.1 | 리버스 프록시 뒤의 실제 클라이언트 IP: `SVNGO_TRUSTED_PROXIES`에 넣은 프록시의 `X-Forwarded-For`를 신뢰해 접근 IP 제한, SVN 로그인 차단, 로그에 실제 IP를 사용([리버스 프록시 뒤의 클라이언트 IP](#리버스-프록시-뒤의-클라이언트-ip)). DB 스키마 변경 없음. |
 | 1.1.0 | [SVN 위치](#svn-위치-여러-url-경로): `/android/<저장소>` 같은 추가 URL 경로를 같은 이름 폴더에서 제공하고, 위치 간 저장소 이동 지원. 다국어(영어·한국어 기본 제공, 언어 파일 추가 가능). 관리 UI·SVN [접근 IP 제한](#접근-ip-제한). DB 스키마는 자동으로 변환됩니다. |
 | 1.0.0 | 첫 릴리스: 저장소·사용자·그룹·권한 관리, 웹 탐색, 백업·복원, SVN 무차별 대입 차단 |
 

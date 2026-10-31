@@ -141,7 +141,7 @@ You can use the image published on Docker Hub instead of building from source.
 
 | Tag | Platform | Description |
 |---|---|---|
-| `1.1.0` | linux/amd64 | Pinned version. Recommended for production |
+| `1.1.1` | linux/amd64 | Pinned version. Recommended for production |
 | `latest` | linux/amd64 | Latest release |
 
 - Built with Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26.
@@ -160,7 +160,7 @@ docker run -d --name svngo --restart unless-stopped `
   --tmpfs "/tmp:size=64m,mode=1777" `
   --cap-drop ALL `
   --security-opt "no-new-privileges:true" `
-  isul/svngo:1.1.0
+  isul/svngo:1.1.1
 ```
 
 PowerShell treats unquoted commas as array separators, so quote the `--tmpfs` values. See [Container security options](#container-security-options) for what each option does.
@@ -172,7 +172,7 @@ Replace the `build:` block and the `image:` line in this repository's `docker-co
 ```yaml
 services:
   svngo:
-    image: isul/svngo:1.1.0
+    image: isul/svngo:1.1.1
 ```
 
 ```powershell
@@ -753,7 +753,7 @@ docker compose exec svngo svngo version
 ### Multi-architecture build
 
 ```powershell
-docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/svngo:1.1.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/svngo:1.1.1 --push .
 ```
 
 ## Tests
@@ -829,6 +829,7 @@ README.ko.md          Korean version of this document
 
 | Version | Changes |
 |---|---|
+| 1.1.1 | Real client IP behind a reverse proxy: `X-Forwarded-For` from proxies listed in `SVNGO_TRUSTED_PROXIES` is trusted, so IP access restriction, SVN login blocking and logs use the real IP ([Client IP behind a reverse proxy](#client-ip-behind-a-reverse-proxy)). No DB schema change. |
 | 1.1.0 | [SVN locations](#svn-locations-multiple-url-paths): extra URL paths such as `/android/<repository>` served from folders of the same name, with moving repositories between locations. Multiple languages (English and Korean built in, language files can be added). [IP access restriction](#restricting-access-by-ip) for the admin UI and SVN. The DB schema is migrated automatically. |
 | 1.0.0 | First release: repository, user, group and permission management, web browsing, backup and restore, SVN brute-force blocking |
 
