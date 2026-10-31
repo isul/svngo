@@ -81,6 +81,7 @@ func (ap *Supervisor) env() []string {
 		"SVNGO_SVN_BLOCK_MAP=" + filepath.Join(ap.cfg.RunDir, blockFile),
 		"SVNGO_SVN_ACCESS_CONF=" + AccessFile(ap.cfg.RunDir),
 		"SVNGO_SVN_LOCATIONS_CONF=" + LocationsFile(ap.cfg.RunDir),
+		"SVNGO_REMOTEIP_CONF=" + RemoteIPFile(ap.cfg.RunDir),
 	}
 	if tz, ok := os.LookupEnv("TZ"); ok {
 		env = append(env, "TZ="+tz)
@@ -101,10 +102,13 @@ func fileExists(p string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
-// Check decides whether HTTPS is enabled and validates the Apache
-// configuration (httpd -t). Call it once before Run.
+// Check decides whether HTTPS is enabled, writes the trusted proxy file and
+// validates the Apache configuration (httpd -t). Call it once before Run.
 func (ap *Supervisor) Check(ctx context.Context) error {
 	ap.tls = fileExists(ap.cfg.TLSCert) && fileExists(ap.cfg.TLSKey)
+	if err := WriteRemoteIP(ap.cfg.RunDir, ap.cfg.TrustedProxies); err != nil {
+		return fmt.Errorf("writing the trusted proxy list failed: %w", err)
+	}
 	return ap.test(ctx)
 }
 
@@ -187,7 +191,8 @@ func (ap *Supervisor) runOnce(ctx context.Context) error {
 	ap.mu.Lock()
 	ap.cmd, ap.pid, ap.startedAt, ap.running = c, c.Process.Pid, time.Now(), true
 	ap.mu.Unlock()
-	slog.Info("Apache started", "pid", c.Process.Pid, "http_port", ap.cfg.HTTPPort, "tls", ap.tls)
+	slog.Info("Apache started", "pid", c.Process.Pid, "http_port", ap.cfg.HTTPPort, "tls", ap.tls,
+		"trusted_proxies", ap.cfg.TrustedProxies.Len())
 
 	var wg sync.WaitGroup
 	wg.Add(2)

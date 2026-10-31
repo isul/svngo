@@ -280,6 +280,7 @@ In TortoiseSVN, enter `http://localhost/svn/myrepo` as the repository URL. A rep
 | `SVNGO_SVN_MAX_XML_MB` | `64` | Maximum size of SVN XML requests (REPORT/PROPFIND/MERGE) (MB, 0 = unlimited) |
 | `SVNGO_ADMIN_ALLOW_IPS` | (none) | IPs/CIDRs always allowed to reach the admin UI (`/admin`), separated by commas or spaces. Combined with the list set in the web UI. See [Restricting access by IP](#restricting-access-by-ip) |
 | `SVNGO_SVN_ALLOW_IPS` | (none) | IPs/CIDRs always allowed to reach SVN (`/svn`). The server does not start if the format is invalid. |
+| `SVNGO_TRUSTED_PROXIES` | (none) | IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted. For requests from these addresses, access restriction, login blocking and logs use the client IP from the header. See [Client IP behind a reverse proxy](#client-ip-behind-a-reverse-proxy) |
 | `SVNGO_SVNAUTHZ` | auto-detected | Path of the authz validator (`svngo-authz` or `svnauthz`). The server does not start if it is missing or fails its self-test. |
 | `SVNGO_TLS_CERT` / `SVNGO_TLS_KEY` | `/data/config/tls/server.crt` / `.key` | HTTPS is enabled on port 8443 when these files exist. |
 | `TZ` | `Asia/Seoul` | Display time zone |
@@ -347,7 +348,7 @@ When HTTPS is on, the HSTS header and Secure cookies are applied automatically.
 
 **Option 2: external reverse proxy**
 
-Terminate TLS in a proxy such as Nginx, Traefik or Caddy and forward to `http://<container>:8080`. Secure cookies are used when the proxy sends `X-Forwarded-Proto: https`. To always use Secure cookies, set `SVNGO_COOKIE_SECURE=always`.
+Terminate TLS in a proxy such as Nginx, Traefik or Caddy and forward to `http://<container>:8080`. Secure cookies are used when the proxy sends `X-Forwarded-Proto: https`. To always use Secure cookies, set `SVNGO_COOKIE_SECURE=always`. To restrict access and block logins by the real client IP, also set up [Client IP behind a reverse proxy](#client-ip-behind-a-reverse-proxy).
 
 ## Running on a Synology NAS
 
@@ -606,7 +607,51 @@ docker compose exec svngo svngo access-reset svn     # SVN list only
 docker compose exec svngo svngo access-reset all     # both
 ```
 
-**Note**: the client IP is the connection address Apache sees. Behind Docker Desktop (Windows/macOS), NAT or a reverse proxy, all clients may appear with the same address (e.g. `172.17.0.1` or the proxy IP). If **Your current IP** differs from your PC's real address, IP restrictions cannot tell clients apart; restrict access in the host firewall or the proxy instead.
+**Note**: the client IP is the connection address Apache sees. Behind Docker Desktop (Windows/macOS), NAT or a reverse proxy, all clients may appear with the same address (e.g. `172.17.0.1` or the proxy IP). If **Your current IP** differs from your PC's real address, IP restrictions cannot tell clients apart. If a reverse proxy causes this, set `SVNGO_TRUSTED_PROXIES` as described below; for other kinds of NAT, restrict access in the host firewall or the proxy instead.
+
+### Client IP behind a reverse proxy
+
+Behind a reverse proxy such as Caddy or Nginx, Apache only sees the proxy's address. When the proxy connects to the published port from the same host, it appears as the Docker bridge gateway (e.g. `172.17.0.1`, `172.22.0.1`). Every user then has the same IP, so IP access restriction is meaningless and repeated SVN login failures by one person block everyone.
+
+When the proxy address is listed in `SVNGO_TRUSTED_PROXIES`, requests from it use the client IP in `X-Forwarded-For` (Apache `mod_remoteip`). IP access restriction (admin UI and SVN), SVN login blocking, the access log and **Your current IP** all use that address.
+
+1. Before setting it, check **Your current IP** under **System settings → Access restriction**. The address shown there is the proxy address.
+2. Put that address in `.env` and recreate the container.
+
+   ```powershell
+   # .env
+   SVNGO_TRUSTED_PROXIES=172.22.0.1
+   ```
+
+   ```powershell
+   docker compose up -d
+   ```
+
+3. Check that **Your current IP** now shows your PC's address. **Trusted proxies** on the same page shows the configured list.
+
+The proxy only has to send `X-Forwarded-For`. Caddy's `reverse_proxy` sends it by default, so nothing else is needed.
+
+```
+svn.example.com {
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+For Nginx, set `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and `proxy_set_header X-Forwarded-Proto $scheme;`.
+
+**Rules**
+
+- The header is read from the right, and the first address that is not a trusted proxy is the client IP. Values a client puts in the header itself come before the real address the proxy appends, so the IP cannot be spoofed.
+- Requests from addresses not in the list ignore the header and use the connection address. The default (empty list) behaves as in earlier versions.
+- Private addresses such as `192.168.0.10` are accepted as client IPs.
+- Values that trust every address, such as `0.0.0.0/0` or `::/0`, would let anyone spoof their IP and are rejected (the server does not start).
+- Only the Apache managed by SvnGo uses this. With an external Apache (`SVNGO_MANAGE_APACHE` off), configure `mod_remoteip` in that Apache.
+
+**Security note**: requests from a trusted address can set the client IP through `X-Forwarded-For`. Make sure nothing but the proxy can connect from that address.
+
+- If the proxy runs on the same host, publishing the port on loopback only (`SVNGO_HTTP_PUBLISH=127.0.0.1:8080`) and proxying to `127.0.0.1:8080` is recommended. The SvnGo port then cannot be reached directly from the LAN.
+- Alternatively, put the proxy on the same Docker network as SvnGo and proxy to `http://svngo:8080`. In that case list the proxy container's fixed IP.
+- Recreating the Docker network can change the gateway address. If **Your current IP** shows the gateway address again, update the value.
 
 ## SVN locations (multiple URL paths)
 
@@ -685,6 +730,7 @@ Repositories are served at `/svn/<repository>` by default. An **SVN location** a
   - It applies immediately without restarting Apache, and the block list can be viewed and cleared in system settings.
   - Blocks and unblocks are recorded in the audit log.
 - **IP access restriction**: separate allowed IP/CIDR lists for the admin UI and SVN. Apache rejects SVN requests with 403 before authentication, and the Go server rejects every admin page and sign-in request. If a stored list is corrupt, only loopback is allowed (fail-closed). See [Restricting access by IP](#restricting-access-by-ip).
+- **Trusted proxy headers**: `X-Forwarded-For` is read only on requests from proxies listed in `SVNGO_TRUSTED_PROXIES`; other requests use the connection address. Values that trust every address (`0.0.0.0/0`, `::/0`) are rejected.
 - **Request size limits**: SVN request bodies and XML requests (`/svn` and SVN locations) are limited. Other paths accept up to 1 MB, and the admin pages apply per-feature limits in the Go server.
 - **Mandatory authz validation**: at startup the validator is self-tested: it must accept a valid file, reject an invalid one and evaluate permissions correctly. If any check fails the server does not start, and there is no path that applies auth files without validation.
 - **Security headers**: CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP, HSTS (over HTTPS).
@@ -796,6 +842,6 @@ README.ko.md          Korean version of this document
 - It is a single-container design, so horizontal scaling (multiple instances) is not supported.
 - SVN locations cannot be renamed (add a new location and move the repositories instead), and repository names must be unique across all locations. With an external Apache (`SVNGO_MANAGE_APACHE` off) the `<Location>` blocks of SVN locations must be added by hand.
 - SVN login blocking is per client IP, and the block list is kept only in memory, so it resets when the container restarts.
-  - When all clients appear with the same IP, as on some Docker Desktop setups or behind a reverse proxy, repeated failures by one person can block everyone. In that case raise the allowed count or set it to 0 in system settings, and limit attempts in the proxy instead.
-- IP access restriction also uses the connection address Apache sees. `X-Forwarded-For` is not trusted, so behind a reverse proxy the proxy address is evaluated. If `SVNGO_MANAGE_APACHE` is turned off to use an external Apache, the SVN list is saved but not applied.
+  - When all clients appear with the same IP, as on some Docker Desktop setups, repeated failures by one person can block everyone. In that case raise the allowed count or set it to 0 in system settings, and limit attempts in the proxy instead. If a reverse proxy causes this, `SVNGO_TRUSTED_PROXIES` solves it.
+- IP access restriction also uses the connection address Apache sees. `X-Forwarded-For` is used only on requests from proxies listed in `SVNGO_TRUSTED_PROXIES` ([Client IP behind a reverse proxy](#client-ip-behind-a-reverse-proxy)). If `SVNGO_MANAGE_APACHE` is turned off to use an external Apache, the SVN list and `SVNGO_TRUSTED_PROXIES` are not applied.
 - On some Linux hosts (AppArmor or snap Docker), `no-new-privileges` can make every executable in the container fail with `operation not permitted`. In that case remove the `security_opt` entry from `docker-compose.yml`. Docker Desktop (Windows/macOS) is not affected.

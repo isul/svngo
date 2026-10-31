@@ -20,6 +20,7 @@ services:
       SVNGO_SVN_MAX_XML_MB: ${SVNGO_SVN_MAX_XML_MB:-64}
       SVNGO_ADMIN_ALLOW_IPS: ${SVNGO_ADMIN_ALLOW_IPS:-}
       SVNGO_SVN_ALLOW_IPS: ${SVNGO_SVN_ALLOW_IPS:-}
+      SVNGO_TRUSTED_PROXIES: ${SVNGO_TRUSTED_PROXIES:-}
       TZ: ${TZ:-Asia/Seoul}
     volumes:
       - svn-repos:/data/repos

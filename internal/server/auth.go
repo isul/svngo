@@ -148,7 +148,8 @@ func (a *App) sameOrigin(r *http.Request) bool {
 }
 
 // clientIP returns the client address. Requests come through Apache on
-// loopback, which appends the real peer to X-Forwarded-For.
+// loopback, which appends the client address to X-Forwarded-For (the peer, or
+// the address mod_remoteip took from a trusted proxy's X-Forwarded-For).
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

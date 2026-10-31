@@ -176,6 +176,7 @@ func TestSvnAllowListApply(t *testing.T) {
 	cfg.ManageApache = true
 	cfg.ApacheBin = writeFakeHttpd(t, dir, true)
 	cfg.ApacheConf = dir + "/httpd.conf"
+	cfg.TrustedProxies = ipacl.MustParse("172.22.0.1")
 	e := startEnv(t, cfg)
 	ctx := context.Background()
 	if err := e.app.initSvnAllow(ctx); err != nil {
@@ -192,6 +193,9 @@ func TestSvnAllowListApply(t *testing.T) {
 	_, page := admin.get("/admin/system")
 	if strings.Contains(page, "SVN 목록은 저장만 되고") {
 		t.Fatal("unmanaged warning shown although Apache is managed")
+	}
+	if !strings.Contains(page, "신뢰하는 프록시") || !strings.Contains(page, "172.22.0.1") || !strings.Contains(page, "SVNGO_TRUSTED_PROXIES") {
+		t.Fatal("trusted proxies not shown")
 	}
 	admin.postOK("/admin/system/access", url.Values{"svn_allow_ips": {"192.0.2.0/24"}})
 	b, _ := os.ReadFile(live)

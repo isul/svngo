@@ -48,6 +48,10 @@ type Config struct {
 	AdminAllowEnv ipacl.List
 	SvnAllowEnv   ipacl.List
 
+	// Reverse proxies whose X-Forwarded-For is trusted by the managed Apache
+	// (mod_remoteip). Empty = the connection address is the client address.
+	TrustedProxies ipacl.List
+
 	SvnAdmin string
 	SvnLook  string
 	Svn      string
@@ -167,6 +171,9 @@ func Load() (*Config, error) {
 		}
 		*l.dst = list
 	}
+	if c.TrustedProxies, err = ParseTrustedProxies(os.Getenv("SVNGO_TRUSTED_PROXIES")); err != nil {
+		return nil, fmt.Errorf("SVNGO_TRUSTED_PROXIES: %w", err)
+	}
 	for _, d := range []*string{&c.ReposDir, &c.ConfigDir, &c.DBDir, &c.BackupDir, &c.RunDir} {
 		abs, err := filepath.Abs(*d)
 		if err != nil {
@@ -181,6 +188,21 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("authz validator (svngo-authz or svnauthz) not found; set its path with SVNGO_SVNAUTHZ")
 	}
 	return c, nil
+}
+
+// ParseTrustedProxies parses the trusted proxy list. Catch-all networks are
+// rejected: they would let every client choose its own address.
+func ParseTrustedProxies(text string) (ipacl.List, error) {
+	list, err := ipacl.Parse(text)
+	if err != nil {
+		return ipacl.List{}, err
+	}
+	for _, c := range list.CIDRs() {
+		if strings.HasSuffix(c, "/0") {
+			return ipacl.List{}, fmt.Errorf("%s would trust every client; list only the proxy addresses", c)
+		}
+	}
+	return list, nil
 }
 
 func (c *Config) HtpasswdFile() string { return filepath.Join(c.ConfigDir, "htpasswd") }

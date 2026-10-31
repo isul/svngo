@@ -279,6 +279,7 @@ TortoiseSVN에서는 저장소 URL에 `http://localhost/svn/myrepo`를 입력합
 | `SVNGO_SVN_MAX_XML_MB` | `64` | SVN XML 요청(REPORT/PROPFIND/MERGE)의 최대 크기(MB, 0=무제한) |
 | `SVNGO_ADMIN_ALLOW_IPS` | (없음) | 관리 UI(`/admin`)에 항상 접근을 허용할 IP/CIDR(쉼표·공백 구분). 웹 UI에서 설정한 목록과 합쳐 적용합니다. [접근 IP 제한](#접근-ip-제한) 참고 |
 | `SVNGO_SVN_ALLOW_IPS` | (없음) | SVN(`/svn`)에 항상 접근을 허용할 IP/CIDR. 형식이 틀리면 시작하지 않습니다. |
+| `SVNGO_TRUSTED_PROXIES` | (없음) | `X-Forwarded-For`를 신뢰할 리버스 프록시의 IP/CIDR. 이 주소에서 온 요청은 헤더에 담긴 클라이언트 IP로 접근 제한, 로그인 차단, 로그를 처리합니다. [리버스 프록시 뒤의 클라이언트 IP](#리버스-프록시-뒤의-클라이언트-ip) 참고 |
 | `SVNGO_SVNAUTHZ` | 자동 탐색 | authz 검증 도구 경로(`svngo-authz` 또는 `svnauthz`). 없거나 자체 점검에 실패하면 시작하지 않습니다. |
 | `SVNGO_TLS_CERT` / `SVNGO_TLS_KEY` | `/data/config/tls/server.crt` / `.key` | 이 파일들이 있으면 8443 포트에서 HTTPS를 켭니다. |
 | `TZ` | `Asia/Seoul` | 표시 시간대 |
@@ -346,7 +347,7 @@ HTTPS가 켜지면 HSTS 헤더와 Secure 쿠키가 자동으로 적용됩니다.
 
 **방법 2: 외부 리버스 프록시**
 
-Nginx, Traefik, Caddy 같은 프록시에서 TLS를 종료하고 `http://<컨테이너>:8080`으로 전달합니다. 프록시가 `X-Forwarded-Proto: https`를 보내면 Secure 쿠키가 적용됩니다. 쿠키를 항상 Secure로 하려면 `SVNGO_COOKIE_SECURE=always`를 지정하세요.
+Nginx, Traefik, Caddy 같은 프록시에서 TLS를 종료하고 `http://<컨테이너>:8080`으로 전달합니다. 프록시가 `X-Forwarded-Proto: https`를 보내면 Secure 쿠키가 적용됩니다. 쿠키를 항상 Secure로 하려면 `SVNGO_COOKIE_SECURE=always`를 지정하세요. 실제 클라이언트 IP로 접근 제한과 로그인 차단을 하려면 [리버스 프록시 뒤의 클라이언트 IP](#리버스-프록시-뒤의-클라이언트-ip)도 설정하세요.
 
 ## 시놀로지(Synology) NAS에서 실행하기
 
@@ -605,7 +606,51 @@ docker compose exec svngo svngo access-reset svn     # SVN 목록만
 docker compose exec svngo svngo access-reset all     # 둘 다
 ```
 
-**주의**: 클라이언트 IP는 Apache가 본 접속 주소입니다. Docker Desktop(Windows/macOS)이나 NAT, 리버스 프록시 뒤에서는 모든 클라이언트가 같은 주소(예: `172.17.0.1`, 프록시 IP)로 보일 수 있습니다. 화면의 **현재 접속 IP**가 실제 PC 주소와 다르면 IP 제한으로 클라이언트를 구분할 수 없으니, 호스트 방화벽이나 프록시에서 제한하세요.
+**주의**: 클라이언트 IP는 Apache가 본 접속 주소입니다. Docker Desktop(Windows/macOS)이나 NAT, 리버스 프록시 뒤에서는 모든 클라이언트가 같은 주소(예: `172.17.0.1`, 프록시 IP)로 보일 수 있습니다. 화면의 **현재 접속 IP**가 실제 PC 주소와 다르면 IP 제한으로 클라이언트를 구분할 수 없습니다. 리버스 프록시 때문이라면 아래와 같이 `SVNGO_TRUSTED_PROXIES`를 설정하고, 그 밖의 NAT 때문이라면 호스트 방화벽이나 프록시에서 제한하세요.
+
+### 리버스 프록시 뒤의 클라이언트 IP
+
+Caddy, Nginx 같은 리버스 프록시 뒤에서는 Apache가 프록시의 주소만 봅니다. 프록시가 같은 호스트에서 공개 포트로 접속하면 Docker 브리지 게이트웨이 주소(예: `172.17.0.1`, `172.22.0.1`)로 보입니다. 이 상태에서는 모든 사용자가 같은 IP라서 접근 IP 제한이 의미가 없고, 한 사람이 SVN 로그인에 반복해서 실패하면 모두가 차단됩니다.
+
+`SVNGO_TRUSTED_PROXIES`에 프록시 주소를 넣으면, 그 주소에서 온 요청은 `X-Forwarded-For`에 담긴 클라이언트 IP를 씁니다(Apache `mod_remoteip`). 접근 IP 제한(관리 UI, SVN), SVN 로그인 차단, 접근 로그, 화면의 **현재 접속 IP**가 모두 이 주소를 기준으로 합니다.
+
+1. 설정하기 전에 **시스템 설정 → 접근 제한**의 **현재 접속 IP**를 확인합니다. 여기 표시된 주소가 프록시 주소입니다.
+2. `.env`에 그 주소를 넣고 컨테이너를 다시 만듭니다.
+
+   ```powershell
+   # .env
+   SVNGO_TRUSTED_PROXIES=172.22.0.1
+   ```
+
+   ```powershell
+   docker compose up -d
+   ```
+
+3. **현재 접속 IP**가 PC 주소로 바뀌었는지 확인합니다. 같은 화면의 **신뢰하는 프록시**에 설정한 목록이 표시됩니다.
+
+프록시는 `X-Forwarded-For`를 보내기만 하면 됩니다. Caddy의 `reverse_proxy`는 기본으로 보내므로 따로 설정할 것이 없습니다.
+
+```
+svn.example.com {
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+Nginx는 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`와 `proxy_set_header X-Forwarded-Proto $scheme;`를 지정합니다.
+
+**규칙**
+
+- 헤더를 오른쪽부터 읽어 신뢰하는 프록시가 아닌 첫 주소를 클라이언트 IP로 씁니다. 클라이언트가 직접 넣은 값은 프록시가 덧붙인 실제 주소보다 앞에 있으므로 IP를 위조할 수 없습니다.
+- 목록에 없는 주소에서 온 요청은 헤더를 무시하고 접속 주소를 그대로 씁니다. 기본값(빈 목록)은 이전 버전과 같습니다.
+- `192.168.0.10` 같은 사설 주소도 클라이언트 IP로 인정합니다.
+- `0.0.0.0/0`, `::/0`처럼 모든 주소를 신뢰하는 값은 누구나 IP를 위조할 수 있게 되므로 거부합니다(시작하지 않음).
+- SvnGo가 관리하는 Apache에만 적용됩니다. 외부 Apache(`SVNGO_MANAGE_APACHE` 끔)를 쓰면 그 Apache에서 `mod_remoteip`를 직접 설정하세요.
+
+**보안 주의**: 신뢰하는 주소에서 온 요청은 `X-Forwarded-For`로 클라이언트 IP를 정할 수 있습니다. 프록시가 아닌 곳에서 그 주소로 접속할 수 없게 하세요.
+
+- 프록시가 같은 호스트에 있으면 포트를 루프백에만 공개하고(`SVNGO_HTTP_PUBLISH=127.0.0.1:8080`) 프록시는 `127.0.0.1:8080`으로 전달하는 것을 권장합니다. LAN에서 SvnGo 포트로 직접 접속할 수 없게 됩니다.
+- 프록시를 SvnGo와 같은 Docker 네트워크에 두고 `http://svngo:8080`으로 전달하는 방법도 있습니다. 이때는 프록시 컨테이너의 고정 IP를 넣습니다.
+- Docker 네트워크를 다시 만들면 게이트웨이 주소가 바뀔 수 있습니다. **현재 접속 IP**가 다시 게이트웨이 주소로 보이면 값을 고치세요.
 
 ## SVN 위치 (여러 URL 경로)
 
@@ -684,6 +729,7 @@ docker compose exec svngo svngo access-reset all     # 둘 다
   - Apache를 재시작하지 않고 바로 적용되며, 시스템 설정 화면에서 차단 목록을 보고 해제할 수 있습니다.
   - 차단과 해제는 감사 로그에 기록됩니다.
 - **접근 IP 제한**: 관리 UI와 SVN에 각각 허용 IP/CIDR 목록을 둘 수 있습니다. SVN은 Apache가 인증 전에 403으로 거부하고, 관리 UI는 모든 화면과 로그인 요청을 Go 서버가 거부합니다. 저장된 목록이 손상되면 루프백만 허용하는 쪽으로 동작합니다(fail-closed). 자세한 내용은 [접근 IP 제한](#접근-ip-제한)을 참고하세요.
+- **프록시 헤더 신뢰 범위**: `X-Forwarded-For`는 `SVNGO_TRUSTED_PROXIES`에 넣은 프록시에서 온 요청에서만 읽고, 그 밖의 요청은 접속 주소를 씁니다. 모든 주소를 신뢰하는 값(`0.0.0.0/0`, `::/0`)은 거부합니다.
 - **요청 크기 제한**: SVN 요청(`/svn`과 SVN 위치)의 본문과 XML 요청 크기를 제한합니다. 그 밖의 경로는 1MB까지만 받고, 관리 화면은 Go 서버가 기능별로 제한합니다.
 - **authz 검증 강제**: 시작할 때 검증 도구를 자체 점검합니다. 정상 파일은 통과시키고, 잘못된 파일은 거부하고, 권한을 올바르게 평가하는지 확인합니다. 하나라도 실패하면 서버가 시작되지 않으며, 검증 없이 인증 파일을 적용하는 경로는 없습니다.
 - **보안 헤더**: CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP, HSTS(HTTPS)를 보냅니다.
@@ -795,6 +841,6 @@ README.ko.md       한국어 문서 (이 문서)
 - 컨테이너 하나 구성이라 수평 확장(다중 인스턴스)은 지원하지 않습니다.
 - SVN 위치는 이름을 바꿀 수 없고(새 위치를 만든 뒤 저장소를 이동), 저장소 이름은 모든 위치에서 고유해야 합니다. 외부 Apache를 쓰는 경우(`SVNGO_MANAGE_APACHE` 끔) SVN 위치의 `<Location>` 블록을 직접 추가해야 합니다.
 - SVN 로그인 차단은 클라이언트 IP 기준이며, 차단 목록은 메모리에만 있어 컨테이너를 재시작하면 초기화됩니다.
-  - 일부 Docker Desktop 환경이나 리버스 프록시 뒤처럼 모든 클라이언트가 같은 IP로 보이면, 한 사람의 반복 실패로 모두가 차단될 수 있습니다. 이 경우 시스템 설정에서 허용 횟수를 높이거나 0으로 끄고, 프록시에서 따로 제한하세요.
-- 접근 IP 제한도 Apache가 본 접속 주소 기준입니다. `X-Forwarded-For`는 신뢰하지 않으므로, 리버스 프록시 뒤에서는 프록시 주소로 판정됩니다. `SVNGO_MANAGE_APACHE`를 끄고 외부 Apache를 쓰는 경우 SVN 목록은 저장만 되고 적용되지 않습니다.
+  - 일부 Docker Desktop 환경처럼 모든 클라이언트가 같은 IP로 보이면, 한 사람의 반복 실패로 모두가 차단될 수 있습니다. 이 경우 시스템 설정에서 허용 횟수를 높이거나 0으로 끄고, 프록시에서 따로 제한하세요. 리버스 프록시 때문이라면 `SVNGO_TRUSTED_PROXIES`로 해결됩니다.
+- 접근 IP 제한도 Apache가 본 접속 주소 기준입니다. `X-Forwarded-For`는 `SVNGO_TRUSTED_PROXIES`에 넣은 프록시에서 온 요청에서만 사용합니다([리버스 프록시 뒤의 클라이언트 IP](#리버스-프록시-뒤의-클라이언트-ip)). `SVNGO_MANAGE_APACHE`를 끄고 외부 Apache를 쓰는 경우 SVN 목록과 `SVNGO_TRUSTED_PROXIES`는 적용되지 않습니다.
 - 일부 Linux 호스트(AppArmor 또는 snap Docker)에서는 `no-new-privileges` 설정이 있으면 컨테이너 안의 모든 실행 파일이 `operation not permitted`로 실패할 수 있습니다. 이 경우 `docker-compose.yml`의 `security_opt` 항목을 제거하세요. Docker Desktop(Windows/macOS)에서는 문제없습니다.

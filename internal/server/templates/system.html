@@ -105,7 +105,8 @@
   <h2>{{t "allowip.title"}}</h2>
   <p class="muted small">{{t "allowip.hint"}}</p>
   <dl class="kv">
-    <dt>{{t "allowip.current_ip"}}</dt><dd><span class="mono">{{.ClientIP}}</span><div class="muted small">{{t "allowip.current_ip_hint"}}</div></dd>
+    <dt>{{t "allowip.current_ip"}}</dt><dd><span class="mono">{{.ClientIP}}</span><div class="muted small">{{t "allowip.current_ip_hint" "SVNGO_TRUSTED_PROXIES"}}</div></dd>
+    {{if .SvnManage}}<dt>{{t "allowip.trusted"}}</dt><dd>{{if .Trusted}}<span class="mono">{{join .Trusted ", "}}</span>{{else}}<span class="muted">{{t "allowip.trusted_none"}}</span>{{end}}<div class="muted small">{{t "allowip.trusted_hint" "SVNGO_TRUSTED_PROXIES"}}</div></dd>{{end}}
   </dl>
   <form method="post" action="/admin/system/access" class="form">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">

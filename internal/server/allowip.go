@@ -163,6 +163,7 @@ func (a *App) allowView(r *http.Request) map[string]any {
 		"Svn":       store.Setting(ctx, a.db, settingSvnAllow),
 		"AdminEnv":  a.cfg.AdminAllowEnv.Entries(),
 		"SvnEnv":    a.cfg.SvnAllowEnv.Entries(),
+		"Trusted":   a.cfg.TrustedProxies.Entries(),
 		"AdminLen":  a.adminAllowList(ctx).Len(),
 		"SvnLen":    a.svnAllowList(ctx).Len(),
 		"SvnManage": a.cfg.ManageApache,

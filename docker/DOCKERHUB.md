@@ -136,6 +136,7 @@ In TortoiseSVN, use `http://<host>/svn/myrepo` as the repository URL.
 | `SVNGO_SVN_MAX_XML_MB` | `64` | Max SVN XML body size, MB. 0 = unlimited |
 | `SVNGO_ADMIN_ALLOW_IPS` | (none) | Always-allow IP/CIDR for `/admin` (comma-separated). Merged with UI list |
 | `SVNGO_SVN_ALLOW_IPS` | (none) | Always-allow IP/CIDR for `/svn`. Apache returns 403 before auth |
+| `SVNGO_TRUSTED_PROXIES` | (none) | Reverse proxy IP/CIDR whose `X-Forwarded-For` is trusted (real client IP for allowlists, login blocking, logs). `0.0.0.0/0` / `::/0` rejected |
 | `SVNGO_TLS_CERT` / `SVNGO_TLS_KEY` | `/data/config/tls/server.crt` / `.key` | Enables HTTPS on 8443 when both files exist |
 | `TZ` | `Asia/Seoul` | Display timezone |
 
@@ -205,7 +206,7 @@ More detail: [Synology section in README.ko.md](https://github.com/isul/svngo/bl
 ### HTTPS
 
 - **Inside the container:** Place PEM cert and key at `tls/server.crt` and `tls/server.key` on the config volume, restart — HTTPS on 8443, HSTS and Secure cookies.
-- **Reverse proxy:** Terminate TLS with Nginx, Traefik, Caddy, etc., proxy to `http://<container>:8080`. Send `X-Forwarded-Proto: https` or set `SVNGO_COOKIE_SECURE=always`.
+- **Reverse proxy:** Terminate TLS with Nginx, Traefik, Caddy, etc., proxy to `http://<container>:8080`. Send `X-Forwarded-Proto: https` or set `SVNGO_COOKIE_SECURE=always`. To see real client IPs, set `SVNGO_TRUSTED_PROXIES` to the proxy address (see IP allowlists below).
 
 ### Migrating from an existing SVN server
 
@@ -220,6 +221,8 @@ More detail: [Synology section in README.ko.md](https://github.com/isul/svngo/bl
 ```bash
 docker exec svngo svngo access-reset admin   # admin | svn | all
 ```
+
+Behind a reverse proxy every client shows the proxy address (e.g. the Docker gateway `172.22.0.1`). Put the **Your current IP** value shown on that page into `SVNGO_TRUSTED_PROXIES` and recreate the container: requests from that address then use the client IP from `X-Forwarded-For` (Apache `mod_remoteip`; the right-most untrusted entry, so clients cannot spoof it). Make sure only the proxy can connect from that address, e.g. publish the port on `127.0.0.1` only.
 
 ### Notes
 
@@ -367,6 +370,7 @@ TortoiseSVN에서는 저장소 URL로 `http://<서버>/svn/myrepo`를 입력합�
 | `SVNGO_SVN_MAX_XML_MB` | `64` | SVN XML 요청 최대 크기, MB. 0=무제한 |
 | `SVNGO_ADMIN_ALLOW_IPS` | (없음) | 관리 UI(`/admin`)에 항상 허용할 IP/CIDR(쉼표 구분). 웹 UI 목록과 합쳐 적용 |
 | `SVNGO_SVN_ALLOW_IPS` | (없음) | SVN(`/svn`)에 항상 허용할 IP/CIDR. Apache가 인증 전에 403으로 거부 |
+| `SVNGO_TRUSTED_PROXIES` | (없음) | `X-Forwarded-For`를 신뢰할 리버스 프록시 IP/CIDR(접근 제한·로그인 차단·로그에 실제 클라이언트 IP 사용). `0.0.0.0/0`, `::/0`은 거부 |
 | `SVNGO_TLS_CERT` / `SVNGO_TLS_KEY` | `/data/config/tls/server.crt` / `.key` | 두 파일이 있으면 8443에서 HTTPS 활성화 |
 | `TZ` | `Asia/Seoul` | 표시 시간대 |
 
@@ -436,7 +440,7 @@ ls -ln "$BASE"   # 네 폴더 모두 1000 1000 이면 정상
 ### HTTPS
 
 - **컨테이너에서 직접:** PEM 인증서와 키를 config 볼륨의 `tls/server.crt`, `tls/server.key`로 넣고 재시작하면 8443에서 HTTPS가 켜지고 HSTS와 Secure 쿠키가 적용됩니다.
-- **리버스 프록시:** Nginx, Traefik, Caddy 등에서 TLS를 종료하고 `http://<컨테이너>:8080`으로 전달합니다. `X-Forwarded-Proto: https`를 보내거나 `SVNGO_COOKIE_SECURE=always`를 지정하세요.
+- **리버스 프록시:** Nginx, Traefik, Caddy 등에서 TLS를 종료하고 `http://<컨테이너>:8080`으로 전달합니다. `X-Forwarded-Proto: https`를 보내거나 `SVNGO_COOKIE_SECURE=always`를 지정하세요. 실제 클라이언트 IP를 쓰려면 `SVNGO_TRUSTED_PROXIES`에 프록시 주소를 넣으세요(아래 접근 IP 제한 참고).
 
 ### 기존 SVN 서버에서 이전
 
@@ -451,6 +455,8 @@ ls -ln "$BASE"   # 네 폴더 모두 1000 1000 이면 정상
 ```bash
 docker exec svngo svngo access-reset admin   # admin | svn | all
 ```
+
+리버스 프록시 뒤에서는 모든 클라이언트가 프록시 주소(예: Docker 게이트웨이 `172.22.0.1`)로 보입니다. 이 화면의 **현재 접속 IP** 값을 `SVNGO_TRUSTED_PROXIES`에 넣고 컨테이너를 다시 만들면, 그 주소에서 온 요청은 `X-Forwarded-For`의 클라이언트 IP를 씁니다(Apache `mod_remoteip`, 신뢰하지 않는 가장 오른쪽 주소를 쓰므로 클라이언트가 위조할 수 없음). 그 주소로는 프록시만 접속할 수 있게 하세요(예: 포트를 `127.0.0.1`에만 공개).
 
 ### 참고
 
