@@ -719,7 +719,8 @@ internal/
   logring/            recent log buffer (in memory)
 docker/httpd.conf     Apache configuration (mod_dav_svn, authz_svn, proxy)
 docker/svngo-authz.c  libsvn-based authz validator (svnauthz compatible)
-docker/DOCKERHUB.md   Docker Hub repository description (isul/svngo Overview)
+docker/DOCKERHUB.md   Docker Hub Overview (English + Korean)
+docker/DOCKERHUB.short.txt  Hub one-line description (EN | KO); push with docker/update-dockerhub-overview.sh
 Dockerfile            multi-stage build (Go → C helper → alpine runtime)
 docker-compose.yml    production compose file
 e2e/                  Docker E2E tests

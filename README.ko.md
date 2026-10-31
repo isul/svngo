@@ -718,7 +718,8 @@ internal/
   logring/            최근 로그 보관(메모리)
 docker/httpd.conf  Apache 설정 (mod_dav_svn, authz_svn, proxy)
 docker/svngo-authz.c  libsvn 기반 authz 검증 도구 (svnauthz 호환)
-docker/DOCKERHUB.md   Docker Hub 저장소 설명 (isul/svngo Overview)
+docker/DOCKERHUB.md   Docker Hub Overview(영어·한국어)
+docker/DOCKERHUB.short.txt  Hub 상단 한 줄 설명(영어 | 한국어); docker/update-dockerhub-overview.sh 로 반영
 Dockerfile         멀티 스테이지 빌드 (Go → C 헬퍼 → alpine 런타임)
 docker-compose.yml 운영용 compose
 e2e/               Docker E2E 테스트
