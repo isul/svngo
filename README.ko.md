@@ -195,6 +195,10 @@ docker stop svngo; docker rm svngo
 # 위 docker run 명령을 새 태그로 다시 실행합니다(볼륨 이름은 그대로)
 ```
 
+- 새 버전을 처음 시작할 때 DB 스키마가 자동으로 변환됩니다(예: 1.0.0 → 1.1.0). 따로 할 일은 없습니다.
+- 변환 후 이전 이미지로 되돌리는 것은 지원하지 않습니다. 이전 버전은 새 데이터를 무시하므로(예: SVN 위치를 제공하지 않음), 꼭 되돌려야 하면 업데이트 전에 백업한 `svn-db`를 복원하세요.
+- 버전별 변경 내용은 [버전 이력](#버전-이력)을 참고하세요.
+
 ## 빠른 시작 (Windows 11 PowerShell)
 
 소스에서 이미지를 직접 빌드해 실행하는 방법입니다. 빌드 없이 쓰려면 [Docker Hub 이미지](#docker-hub-이미지)를 참고하세요.
@@ -224,6 +228,7 @@ docker compose logs -f svngo
 |---|---|
 | 웹 관리 UI | `http://localhost/admin/` (`http://localhost/` 로 접속하면 자동 이동) |
 | SVN 저장소 | `http://localhost/svn/<저장소명>` |
+| [SVN 위치](#svn-위치-여러-url-경로)의 저장소 | `http://localhost/<위치>/<저장소명>` (예: `/android/app`) |
 | 헬스체크 | `http://localhost/admin/healthz` |
 | HTTPS (인증서 설정 시) | `https://<서버>/admin/`, `https://<서버>/svn/<저장소명>` |
 
@@ -257,7 +262,7 @@ svn commit -m "첫 커밋"
 svn update
 ```
 
-TortoiseSVN에서는 저장소 URL에 `http://localhost/svn/myrepo`를 입력합니다.
+TortoiseSVN에서는 저장소 URL에 `http://localhost/svn/myrepo`를 입력합니다. SVN 위치에 있는 저장소는 `http://localhost/android/app`처럼 위치 경로를 쓰며, 정확한 URL은 저장소 목록과 개요 화면에 표시됩니다.
 
 ## 환경 변수
 
@@ -416,6 +421,7 @@ DSM 방화벽을 쓰고 있다면 **제어판 → 보안 → 방화벽**에서 3
 |---|---|
 | 웹 관리 UI | `http://<NAS주소>:36900/admin/` |
 | SVN 저장소 | `http://<NAS주소>:36900/svn/<저장소명>` |
+| SVN 위치의 저장소 | `http://<NAS주소>:36900/<위치>/<저장소명>` |
 
 ### 3. HTTPS (DSM 인증서 사용)
 
@@ -446,6 +452,7 @@ SVN은 `https://<NAS주소>:36901/svn/<저장소명>`처럼 컨테이너 HTTPS �
   echo 'New-Admin-Pass-123' | sudo docker exec -i svngo svngo admin-passwd admin
   ```
 
+- 저장소나 [SVN 위치](#svn-위치-여러-url-경로) 폴더(예: `repos/android/`)를 `repos`에 복사한 뒤에는 1단계의 `chown -R 1000:1000` / `chmod` 명령을 다시 실행하고 **시스템 설정**에서 등록하세요.
 - 저장소 폴더에 생기는 `#recycle`, `@eaDir` 같은 DSM 시스템 폴더는 저장소 스캔에서 자동으로 제외됩니다.
 - Hyper Backup이나 스냅샷으로 백업할 때는 네 폴더(`repos`, `config`, `db`, `backups`)를 함께 포함하세요.
 - 컨테이너 안의 모든 실행 파일이 `operation not permitted`로 실패하면 `security_opt` 항목을 제거하세요.
@@ -748,7 +755,7 @@ internal/
     static/           CSS, htmx(로컬 번들), 소형 JS (바이너리에 내장)
   i18n/               다국어: 언어 파일 로드·검증·등록, 브라우저 언어 매칭, 번역 메시지
     locales/          기본 언어 파일 en.json, ko.json (바이너리에 내장)
-  apache/             httpd 프로세스 관리, 로그 수집, SVN 무차별 대입 차단, SVN 허용 IP 규칙 생성·적용
+  apache/             httpd 프로세스 관리, 로그 수집, SVN 무차별 대입 차단, SVN 허용 IP 규칙 생성·적용, SVN 위치 <Location> 생성·적용
   ipacl/              허용 IP/CIDR 목록 파싱·정규화·포함 여부 판정
   svn/                svnadmin·svnlook·svn·authz 검증 도구 실행
   authz/              권한 정책 평가, htpasswd·authz 파일 생성
@@ -771,6 +778,13 @@ README.md          영어 문서
 README.ko.md       한국어 문서 (이 문서)
 ```
 
+## 버전 이력
+
+| 버전 | 변경 내용 |
+|---|---|
+| 1.1.0 | [SVN 위치](#svn-위치-여러-url-경로): `/android/<저장소>` 같은 추가 URL 경로를 같은 이름 폴더에서 제공하고, 위치 간 저장소 이동 지원. 다국어(영어·한국어 기본 제공, 언어 파일 추가 가능). 관리 UI·SVN [접근 IP 제한](#접근-ip-제한). DB 스키마는 자동으로 변환됩니다. |
+| 1.0.0 | 첫 릴리스: 저장소·사용자·그룹·권한 관리, 웹 탐색, 백업·복원, SVN 무차별 대입 차단 |
+
 ## 제한 사항
 
 - `svn://`(svnserve)는 지원하지 않으며 HTTP/HTTPS만 지원합니다.
@@ -779,6 +793,7 @@ README.ko.md       한국어 문서 (이 문서)
 - 저장소 크기는 비동기로 계산해 캐시한 값이므로 최신 커밋이 바로 반영되지 않을 수 있습니다.
 - 권한 규칙의 경로에 `[ ] % \` 문자와 앞뒤 공백은 쓸 수 없습니다(authz 문법 제약).
 - 컨테이너 하나 구성이라 수평 확장(다중 인스턴스)은 지원하지 않습니다.
+- SVN 위치는 이름을 바꿀 수 없고(새 위치를 만든 뒤 저장소를 이동), 저장소 이름은 모든 위치에서 고유해야 합니다. 외부 Apache를 쓰는 경우(`SVNGO_MANAGE_APACHE` 끔) SVN 위치의 `<Location>` 블록을 직접 추가해야 합니다.
 - SVN 로그인 차단은 클라이언트 IP 기준이며, 차단 목록은 메모리에만 있어 컨테이너를 재시작하면 초기화됩니다.
   - 일부 Docker Desktop 환경이나 리버스 프록시 뒤처럼 모든 클라이언트가 같은 IP로 보이면, 한 사람의 반복 실패로 모두가 차단될 수 있습니다. 이 경우 시스템 설정에서 허용 횟수를 높이거나 0으로 끄고, 프록시에서 따로 제한하세요.
 - 접근 IP 제한도 Apache가 본 접속 주소 기준입니다. `X-Forwarded-For`는 신뢰하지 않으므로, 리버스 프록시 뒤에서는 프록시 주소로 판정됩니다. `SVNGO_MANAGE_APACHE`를 끄고 외부 Apache를 쓰는 경우 SVN 목록은 저장만 되고 적용되지 않습니다.

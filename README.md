@@ -196,6 +196,10 @@ docker stop svngo; docker rm svngo
 # run the docker run command above again with the new tag (same volume names)
 ```
 
+- The DB schema is migrated automatically on the first start of a new version (e.g. 1.0.0 → 1.1.0); nothing has to be done by hand.
+- Going back to an older image after the migration is not supported. An older version ignores newer data (for example it does not serve SVN locations), so restore the `svn-db` backup taken before the update if you must downgrade.
+- See [Version history](#version-history) for what changed in each version.
+
 ## Quick start (Windows 11 PowerShell)
 
 This builds the image from source and runs it. To skip the build, see [Docker Hub image](#docker-hub-image).
@@ -225,6 +229,7 @@ If port 80 is already in use, change it in `.env`, e.g. `SVNGO_HTTP_PUBLISH=8081
 |---|---|
 | Web admin UI | `http://localhost/admin/` (`http://localhost/` redirects there) |
 | SVN repository | `http://localhost/svn/<repository>` |
+| SVN repository in an [SVN location](#svn-locations-multiple-url-paths) | `http://localhost/<location>/<repository>` (e.g. `/android/app`) |
 | Health check | `http://localhost/admin/healthz` |
 | HTTPS (with a certificate) | `https://<server>/admin/`, `https://<server>/svn/<repository>` |
 
@@ -258,7 +263,7 @@ svn commit -m "first commit"
 svn update
 ```
 
-In TortoiseSVN, enter `http://localhost/svn/myrepo` as the repository URL.
+In TortoiseSVN, enter `http://localhost/svn/myrepo` as the repository URL. A repository in an SVN location uses its own path, e.g. `http://localhost/android/app`; the repository list and overview page show the exact URL.
 
 ## Environment variables
 
@@ -417,6 +422,7 @@ If the DSM firewall is on, allow ports 36900 and 36901 in **Control Panel → Se
 |---|---|
 | Web admin UI | `http://<nas-address>:36900/admin/` |
 | SVN repository | `http://<nas-address>:36900/svn/<repository>` |
+| SVN location repository | `http://<nas-address>:36900/<location>/<repository>` |
 
 ### 3. HTTPS (using the DSM certificate)
 
@@ -447,6 +453,7 @@ For SVN, connect directly to the container's HTTPS port, e.g. `https://<nas-addr
   echo 'New-Admin-Pass-123' | sudo docker exec -i svngo svngo admin-passwd admin
   ```
 
+- After copying repositories or [SVN location](#svn-locations-multiple-url-paths) folders into `repos` (e.g. `repos/android/`), run the `chown -R 1000:1000` / `chmod` commands from step 1 again, then register them in **System settings**.
 - DSM system folders such as `#recycle` and `@eaDir` in the repository folder are skipped by the repository scan.
 - When backing up with Hyper Backup or snapshots, include all four folders (`repos`, `config`, `db`, `backups`).
 - If every executable in the container fails with `operation not permitted`, remove the `security_opt` entry.
@@ -749,7 +756,7 @@ internal/
     static/           CSS, htmx (bundled locally), small JS (embedded in the binary)
   i18n/               languages: load, validate and install language files, browser language matching, translated messages
     locales/          built-in language files en.json and ko.json (embedded in the binary)
-  apache/             httpd process management, log collection, SVN brute-force blocking, SVN allowed-IP rules
+  apache/             httpd process management, log collection, SVN brute-force blocking, SVN allowed-IP rules, SVN location <Location> blocks
   ipacl/              parsing, normalizing and matching allowed IP/CIDR lists
   svn/                runs svnadmin, svnlook, svn and the authz validator
   authz/              permission evaluation, htpasswd and authz file generation
@@ -772,6 +779,13 @@ README.md             this document (English)
 README.ko.md          Korean version of this document
 ```
 
+## Version history
+
+| Version | Changes |
+|---|---|
+| 1.1.0 | [SVN locations](#svn-locations-multiple-url-paths): extra URL paths such as `/android/<repository>` served from folders of the same name, with moving repositories between locations. Multiple languages (English and Korean built in, language files can be added). [IP access restriction](#restricting-access-by-ip) for the admin UI and SVN. The DB schema is migrated automatically. |
+| 1.0.0 | First release: repository, user, group and permission management, web browsing, backup and restore, SVN brute-force blocking |
+
 ## Limitations
 
 - `svn://` (svnserve) is not supported; only HTTP/HTTPS.
@@ -780,6 +794,7 @@ README.ko.md          Korean version of this document
 - Repository sizes are computed asynchronously and cached, so the latest commits may not be reflected right away.
 - Paths in permission rules cannot contain `[ ] % \` or leading/trailing spaces (authz syntax constraint).
 - It is a single-container design, so horizontal scaling (multiple instances) is not supported.
+- SVN locations cannot be renamed (add a new location and move the repositories instead), and repository names must be unique across all locations. With an external Apache (`SVNGO_MANAGE_APACHE` off) the `<Location>` blocks of SVN locations must be added by hand.
 - SVN login blocking is per client IP, and the block list is kept only in memory, so it resets when the container restarts.
   - When all clients appear with the same IP, as on some Docker Desktop setups or behind a reverse proxy, repeated failures by one person can block everyone. In that case raise the allowed count or set it to 0 in system settings, and limit attempts in the proxy instead.
 - IP access restriction also uses the connection address Apache sees. `X-Forwarded-For` is not trusted, so behind a reverse proxy the proxy address is evaluated. If `SVNGO_MANAGE_APACHE` is turned off to use an external Apache, the SVN list is saved but not applied.
