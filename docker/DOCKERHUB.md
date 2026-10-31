@@ -45,7 +45,7 @@ docker run -d --name svngo --restart unless-stopped \
   --tmpfs /run/svngo:size=16m,mode=0750,uid=1000,gid=1000 \
   --tmpfs /tmp:size=64m,mode=1777 \
   --cap-drop ALL \
-  isul/svngo:1.0.0
+  isul/svngo:1.1.0
 ```
 
 On Windows PowerShell, use backticks (`` ` ``) instead of `\` for line continuation, or put the command on one line.
@@ -55,7 +55,7 @@ On Windows PowerShell, use backticks (`` ` ``) instead of `\` for line continuat
 ```yaml
 services:
   svngo:
-    image: isul/svngo:1.0.0
+    image: isul/svngo:1.1.0
     container_name: svngo
     restart: unless-stopped
     ports:
@@ -231,7 +231,7 @@ docker exec svngo svngo access-reset admin   # admin | svn | all
 
 | Tag | Description |
 |---|---|
-| `1.0.0`, `latest` | linux/amd64 |
+| `1.1.0`, `latest` | linux/amd64 |
 
 Stack: Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26
 
@@ -276,7 +276,7 @@ docker run -d --name svngo --restart unless-stopped \
   --tmpfs /run/svngo:size=16m,mode=0750,uid=1000,gid=1000 \
   --tmpfs /tmp:size=64m,mode=1777 \
   --cap-drop ALL \
-  isul/svngo:1.0.0
+  isul/svngo:1.1.0
 ```
 
 Windows PowerShell에서는 줄 끝의 `\` 대신 백틱(`` ` ``)을 쓰거나 한 줄로 입력합니다.
@@ -286,7 +286,7 @@ Windows PowerShell에서는 줄 끝의 `\` 대신 백틱(`` ` ``)을 쓰거나 �
 ```yaml
 services:
   svngo:
-    image: isul/svngo:1.0.0
+    image: isul/svngo:1.1.0
     container_name: svngo
     restart: unless-stopped
     ports:
@@ -462,6 +462,6 @@ docker exec svngo svngo access-reset admin   # admin | svn | all
 
 | 태그 | 설명 |
 |---|---|
-| `1.0.0`, `latest` | linux/amd64 |
+| `1.1.0`, `latest` | linux/amd64 |
 
 구성: Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26

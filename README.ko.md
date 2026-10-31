@@ -140,7 +140,7 @@ Go로 작성한 경량 Subversion(SVN) 서버 및 웹 관리 시스템입니다.
 
 | 태그 | 플랫폼 | 설명 |
 |---|---|---|
-| `1.0.0` | linux/amd64 | 버전 고정. 운영 환경에 권장 |
+| `1.1.0` | linux/amd64 | 버전 고정. 운영 환경에 권장 |
 | `latest` | linux/amd64 | 가장 최근 릴리스 |
 
 - 구성: Alpine 3.22, Apache 2.4, Subversion 1.14, Go 1.26
@@ -159,7 +159,7 @@ docker run -d --name svngo --restart unless-stopped `
   --tmpfs "/tmp:size=64m,mode=1777" `
   --cap-drop ALL `
   --security-opt "no-new-privileges:true" `
-  isul/svngo:1.0.0
+  isul/svngo:1.1.0
 ```
 
 PowerShell은 따옴표 없는 쉼표를 배열 구분자로 해석하므로 `--tmpfs` 값은 따옴표로 감쌉니다. 각 옵션의 의미는 [컨테이너 보안 옵션](#컨테이너-보안-옵션)을 참고하세요.
@@ -171,7 +171,7 @@ PowerShell은 따옴표 없는 쉼표를 배열 구분자로 해석하므로 `--
 ```yaml
 services:
   svngo:
-    image: isul/svngo:1.0.0
+    image: isul/svngo:1.1.0
 ```
 
 ```powershell
@@ -699,7 +699,7 @@ docker compose exec svngo svngo version
 ### 멀티 아키텍처 빌드
 
 ```powershell
-docker buildx build --platform linux/amd64,linux/arm64 -t <레지스트리>/svngo:1.0.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t <레지스트리>/svngo:1.1.0 --push .
 ```
 
 ## 테스트

@@ -12,7 +12,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 ARG TARGETOS TARGETARCH
-ARG VERSION=1.0.0
+ARG VERSION=1.1.0
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w -X svngo/internal/server.Version=${VERSION}" -o /out/svngo ./cmd/svngo
 

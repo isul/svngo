@@ -30,7 +30,7 @@ import (
 const AppName = "SvnGo"
 
 // Version is set at build time with -ldflags "-X svngo/internal/server.Version=…".
-var Version = "1.0.0"
+var Version = "1.1.0"
 
 // App holds shared state for the admin server.
 type App struct {
